@@ -1,0 +1,33 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.pytest_cache/
+.pyenv/
+.pyre/
+.pytype/
+
+# Environment / Secrets
+.env
+*.env
+
+# Git
+.git
+.gitignore
+
+# Media / Uploaded files (handled via Docker volume)
+media/
+staticfiles/
+
+# IDE / Editor folders
+.vscode/
+.idea/
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
