@@ -1,4 +1,3 @@
-
 services:
   web:
     build:
@@ -7,6 +6,8 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - media:/app/media  # Mount persistent media volume
+      - /tmp:/tmp  # Shared temp directory for video processing
     command: sh -c "python manage.py wait_for_db &&
             python manage.py migrate &&
             python manage.py runserver 0.0.0.0:8000"
@@ -18,15 +19,25 @@ services:
       - DB_NAME=devdb
       - DB_USER=devuser
       - DB_PASSWORD=changeme
+      - DEBUG=True
+      - DJANGO_LOG_LEVEL=INFO
     depends_on:
       - db
       - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   worker:
     build:
       context: .
     volumes:
       - .:/app
-    command: celery -A app worker --loglevel=info
+      - media:/app/media  # Same media volume as web service
+      - /tmp:/tmp  # Shared temp directory for video processing
+    command: celery -A app worker --loglevel=info --concurrency=2
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -35,9 +46,29 @@ services:
       - DB_NAME=devdb
       - DB_USER=devuser
       - DB_PASSWORD=changeme
+      - DEBUG=True
+      - DJANGO_LOG_LEVEL=INFO
     depends_on:
       - db
       - redis
+      - web
+    restart: unless-stopped
+
+  # Optional: Celery monitor (useful for debugging)
+  flower:
+    build:
+      context: .
+    ports:
+      - "5555:5555"
+    command: celery -A app flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+    profiles:
+      - monitoring  # Only start with: docker-compose --profile monitoring up
+
   db:
     image: postgres:15-alpine
     volumes:
@@ -46,13 +77,28 @@ services:
       - POSTGRES_DB=devdb
       - POSTGRES_USER=devuser
       - POSTGRES_PASSWORD=changeme
+    ports:
+      - "5432:5432"  # Expose for debugging (remove in production)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser -d devdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   dev-db-data:
-  media:
-
+  media:  # Persistent storage for generated clips
+  redis-data:  # Persistent Redis data
