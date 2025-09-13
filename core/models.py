@@ -102,32 +102,94 @@ class UserCredits(models.Model):
 # Define a Django model named VideoRequest that represents a user's video processing request
 class VideoRequest(models.Model):
     STATUS_CHOICES = [
-    ('pending', 'Pending'),
-    ('processing', 'Processing'),
-    ('done', 'Done'),
-    ('failed', 'Failed')
-]
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('done', 'Done'),
+        ('failed', 'Failed')
+    ]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     url = models.URLField()
     original_language = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    total_clips = models.IntegerField(default=0)  # Filled after processing
+    total_clips = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    # NEW FIELDS FOR ENHANCED FEATURES
+    moment_detection_type = models.CharField(
+        max_length=20,
+        choices=[('ai_powered', 'AI Powered'), ('fixed_intervals', 'Fixed Intervals')],
+        default='ai_powered'
+    )
+    video_quality = models.CharField(
+        max_length=10,
+        choices=[('480p', '480p'), ('720p', '720p'), ('1080p', '1080p'), ('1440p', '1440p'), ('2160p', '2160p')],
+        default='720p'
+    )
+    compression_level = models.CharField(
+        max_length=15,
+        choices=[('high_quality', 'High Quality'), ('balanced', 'Balanced'), ('compressed', 'Compressed')],
+        default='balanced'
+    )
+    caption_style = models.CharField(
+        max_length=20,
+        choices=[
+            ('modern_purple', 'Modern Purple'),
+            ('tiktok_style', 'TikTok Style'),
+            ('youtube_style', 'YouTube Style'),
+            ('instagram_story', 'Instagram Story'),
+            ('podcast_style', 'Podcast Style')
+        ],
+        default='modern_purple'
+    )
+    enable_word_highlighting = models.BooleanField(default=True)
+    clip_duration = models.FloatField(default=30.0)
+    max_clips = models.IntegerField(default=10)
+
+    # Metadata fields
+    processing_settings = models.JSONField(default=dict, blank=True)  # Store all processing settings
+    estimated_processing_time = models.FloatField(null=True, blank=True)  # In minutes
 
     def __str__(self):
         return f"{self.url} ({self.user.email})"
 
 
+
+
 class Clip(models.Model):
     video_request = models.ForeignKey(VideoRequest, on_delete=models.CASCADE, related_name='clips')
-    start_time = models.FloatField()  # seconds
-    end_time = models.FloatField()    # seconds
+    start_time = models.FloatField()
+    end_time = models.FloatField()
     duration = models.FloatField()
-    caption_style = models.JSONField(default=dict)  # store style like color, size, animation
-    status = models.CharField(max_length=20, default='pending')  # pending, processing, done
+    caption_style = models.JSONField(default=dict)
+    status = models.CharField(max_length=20, default='pending')
     file_path = models.FileField(upload_to='clips/', blank=True, null=True)
     format = models.CharField(max_length=10, default='mp4')
 
+    # NEW FIELDS FOR ENHANCED FEATURES
+    detection_method = models.CharField(
+        max_length=20,
+        choices=[('ai_detected', 'AI Detected'), ('audio_detected', 'Audio Detected'), ('fixed_interval', 'Fixed Interval')],
+        default='fixed_interval'
+    )
+    engagement_score = models.FloatField(default=5.0)  # AI-determined engagement score (1-10)
+    moment_reason = models.TextField(blank=True)  # Why this moment was selected
+    moment_tags = models.JSONField(default=list, blank=True)  # Tags like ['educational', 'surprising']
+
+    # Quality and file information
+    video_quality = models.CharField(max_length=10, default='720p')
+    file_size_mb = models.FloatField(null=True, blank=True)
+    compression_level = models.CharField(max_length=15, default='balanced')
+
+    # Caption styling information
+    used_caption_style = models.CharField(max_length=20, default='modern_purple')
+    has_word_highlighting = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['start_time']
+
+    def __str__(self):
+        return f"Clip {self.start_time}s-{self.end_time}s from {self.video_request.id}"
 
 # Define a Django model named CaptionSettings for caption customization options
 class CaptionSettings(models.Model):

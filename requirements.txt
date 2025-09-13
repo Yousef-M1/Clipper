@@ -17,10 +17,15 @@ openai>=1.0.0,<2.0
 openai-whisper>=20231117
 yt-dlp>=2023.12.30
 numpy>=1.24,<2.0
+moviepy>=1.0.3,<2.0
+
+# Audio processing for AI moment detection
+librosa>=0.10.0,<0.11.0
+soundfile>=0.12.0,<0.13.0
 
 # Storage & File Handling
 boto3>=1.34,<2.0
-Pillow>=10.0,<11.0
+Pillow>=9.0,<10.0
 
 # Production Server
 gunicorn>=21.2,<22.0
