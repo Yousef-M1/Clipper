@@ -33,6 +33,9 @@ gunicorn>=21.2,<22.0
 # Environment Variables
 python-dotenv>=1.0,<2.0
 
+# Payment Processing
+stripe>=12.0.0,<13.0
+
 # PyTorch CPU-only (compatible versions)
 --find-links https://download.pytorch.org/whl/cpu/torch_stable.html
 torch==2.1.2+cpu

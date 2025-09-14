@@ -21,8 +21,9 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('clipper/', include('clipper.urls')),
-    path('user/', include('user.urls')),
+    path('api/clipper/', include('clipper.urls')),
+    path('api/user/', include('user.urls')),
+    path('api/payments/', include('payments.urls')),
 ]
 
 if settings.DEBUG:

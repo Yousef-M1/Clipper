@@ -1,17 +1,24 @@
 from rest_framework import generics, authentication, permissions, status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
-from core.models import VideoRequest, CaptionSettings, Clip
+from django.http import HttpResponse, Http404
+from django.db.models import Count, Q
+from core.models import VideoRequest, CaptionSettings, Clip, UserCredits
+from core.throttling import PlanBasedThrottle, VideoProcessingThrottle, BurstProtectionThrottle
 from clipper.serializers import VideoRequestSerializer, CaptionSettingsSerializer, ClipSerializer
 from .tasks.tasks import process_video_request, process_video_with_custom_settings
 from .video_quality import get_available_quality_presets, get_available_compression_levels
 from .caption_styles import get_available_caption_styles
+from .video_formats import get_available_video_formats, get_available_platforms
+import os
+import mimetypes
 
 class VideoRequestCreateView(generics.CreateAPIView):
     """Enhanced video request creation with processing settings"""
     serializer_class = VideoRequestSerializer
     authentication_classes = [authentication.TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [VideoProcessingThrottle, BurstProtectionThrottle]
 
     def perform_create(self, serializer):
         video_request = serializer.save(user=self.request.user)
@@ -45,6 +52,7 @@ class EnhancedVideoRequestCreateView(generics.CreateAPIView):
     serializer_class = VideoRequestSerializer
     authentication_classes = [authentication.TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [VideoProcessingThrottle, BurstProtectionThrottle]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -104,11 +112,41 @@ class EnhancedVideoRequestCreateView(generics.CreateAPIView):
         # Word highlighting
         validated['enable_word_highlighting'] = bool(settings.get('enable_word_highlighting', True))
 
+        # Video format options
+        format_types = ['horizontal', 'vertical', 'square', 'custom']
+        validated['output_format'] = settings.get('output_format', 'horizontal')
+        if validated['output_format'] not in format_types:
+            validated['output_format'] = 'horizontal'
+
+        # Social platform
+        platform_presets = get_available_platforms()
+        validated['social_platform'] = settings.get('social_platform', 'youtube')
+        if validated['social_platform'] not in platform_presets:
+            validated['social_platform'] = 'youtube'
+
+        # Custom dimensions
+        if validated['output_format'] == 'custom':
+            from .video_formats import validate_custom_dimensions
+            custom_width = settings.get('custom_width')
+            custom_height = settings.get('custom_height')
+
+            if custom_width and custom_height:
+                is_valid, message = validate_custom_dimensions(int(custom_width), int(custom_height))
+                if is_valid:
+                    validated['custom_width'] = int(custom_width)
+                    validated['custom_height'] = int(custom_height)
+                else:
+                    # Fallback to default format if custom dimensions are invalid
+                    validated['output_format'] = 'horizontal'
+                    validated.pop('custom_width', None)
+                    validated.pop('custom_height', None)
+
         return validated
 
 class VideoRequestListView(generics.ListAPIView):
     serializer_class = VideoRequestSerializer
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [PlanBasedThrottle]
 
     def get_queryset(self):
         return VideoRequest.objects.filter(user=self.request.user).order_by('-created_at')
@@ -168,6 +206,26 @@ def get_caption_styles(request):
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
+def get_video_formats(request):
+    """Get available video formats and aspect ratios"""
+    formats = get_available_video_formats()
+    return Response({
+        'formats': formats,
+        'default_format': 'horizontal'
+    })
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_platform_presets(request):
+    """Get social media platform presets"""
+    platforms = get_available_platforms()
+    return Response({
+        'platforms': platforms,
+        'default_platform': 'youtube'
+    })
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def get_processing_options(request):
     """Get all available processing options"""
     return Response({
@@ -184,6 +242,8 @@ def get_processing_options(request):
         'quality_presets': get_available_quality_presets(),
         'compression_levels': get_available_compression_levels(),
         'caption_styles': get_available_caption_styles(),
+        'video_formats': get_available_video_formats(),
+        'platform_presets': get_available_platforms(),
         'defaults': {
             'moment_detection_type': 'ai_powered',
             'clip_duration': 30.0,
@@ -191,12 +251,15 @@ def get_processing_options(request):
             'video_quality': '720p',
             'compression_level': 'balanced',
             'caption_style': 'modern_purple',
-            'enable_word_highlighting': True
+            'enable_word_highlighting': True,
+            'output_format': 'horizontal',
+            'social_platform': 'youtube'
         }
     })
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@throttle_classes([VideoProcessingThrottle, BurstProtectionThrottle])
 def reprocess_video(request, video_request_id):
     """Reprocess an existing video with new settings"""
     try:
@@ -268,3 +331,268 @@ def estimate_processing_cost(request):
             'clip_count': settings['max_clips']
         }
     })
+
+# DASHBOARD VIEWS
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def dashboard_summary(request):
+    """Get user's dashboard summary with stats and recent activity"""
+    user = request.user
+
+    # Get user's video statistics
+    video_stats = VideoRequest.objects.filter(user=user).aggregate(
+        total_videos=Count('id'),
+        completed_videos=Count('id', filter=Q(status='done')),
+        processing_videos=Count('id', filter=Q(status='processing')),
+        failed_videos=Count('id', filter=Q(status='failed')),
+        total_clips=Count('clips')
+    )
+
+    # Get user credits info
+    try:
+        user_credits = UserCredits.objects.get(user=user)
+        credits_info = {
+            'plan': user_credits.plan.name if user_credits.plan else 'No Plan',
+            'monthly_credits': user_credits.plan.monthly_credits if user_credits.plan else 0,
+            'used_credits': user_credits.used_credits,
+            'remaining_credits': user_credits.remaining_credits,
+            'credit_per_clip': user_credits.plan.credit_per_clip if user_credits.plan else 1
+        }
+    except UserCredits.DoesNotExist:
+        credits_info = {
+            'plan': 'No Plan',
+            'monthly_credits': 0,
+            'used_credits': 0,
+            'remaining_credits': 0,
+            'credit_per_clip': 1
+        }
+
+    # Get recent videos (last 10)
+    recent_videos = VideoRequest.objects.filter(user=user).order_by('-created_at')[:10]
+    recent_videos_data = VideoRequestSerializer(recent_videos, many=True).data
+
+    return Response({
+        'user': {
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'date_joined': user.created_at
+        },
+        'stats': video_stats,
+        'credits': credits_info,
+        'recent_videos': recent_videos_data,
+        'quick_actions': [
+            {'label': 'Create New Video', 'endpoint': '/api/clipper/video-requests/create-enhanced/'},
+            {'label': 'View All Videos', 'endpoint': '/api/clipper/video-requests/'},
+            {'label': 'Account Settings', 'endpoint': '/api/user/manage/'}
+        ]
+    })
+
+class VideoRequestDetailView(generics.RetrieveAPIView):
+    """Get detailed information about a video request including all clips"""
+    serializer_class = VideoRequestSerializer
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return VideoRequest.objects.filter(user=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+
+        # Get all clips for this video
+        clips = Clip.objects.filter(video_request=instance).order_by('start_time')
+        clips_data = ClipSerializer(clips, many=True).data
+
+        # Add download URLs to clips
+        for i, clip_data in enumerate(clips_data):
+            clip_data['download_url'] = f"/api/clipper/clips/{clips[i].id}/download/"
+
+        return Response({
+            'video': serializer.data,
+            'clips': clips_data,
+            'clips_count': len(clips_data),
+            'total_duration': sum(clip.duration for clip in clips),
+            'processing_settings': instance.processing_settings if hasattr(instance, 'processing_settings') else {}
+        })
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def download_clip(request, clip_id):
+    """Download a specific clip file"""
+    try:
+        clip = Clip.objects.get(
+            id=clip_id,
+            video_request__user=request.user
+        )
+    except Clip.DoesNotExist:
+        raise Http404("Clip not found or you don't have permission to access it")
+
+    # Check if file exists
+    if not clip.file_path or not clip.file_path.name:
+        return Response({'error': 'Clip file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        file_path = clip.file_path.path
+        if not os.path.exists(file_path):
+            return Response({'error': 'Clip file not found on disk'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Determine content type
+        content_type, _ = mimetypes.guess_type(file_path)
+        if content_type is None:
+            content_type = 'video/mp4'
+
+        # Create response
+        with open(file_path, 'rb') as f:
+            response = HttpResponse(f.read(), content_type=content_type)
+            response['Content-Disposition'] = f'attachment; filename="clip_{clip_id}_{clip.start_time}-{clip.end_time}s.mp4"'
+            return response
+
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def delete_video_request(request, video_request_id):
+    """Delete a video request and all its clips"""
+    try:
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+    except VideoRequest.DoesNotExist:
+        raise Http404("Video request not found")
+
+    # Delete associated files
+    clips = video_request.clips.all()
+    deleted_files = 0
+
+    for clip in clips:
+        if clip.file_path and clip.file_path.name:
+            try:
+                if os.path.exists(clip.file_path.path):
+                    os.remove(clip.file_path.path)
+                    deleted_files += 1
+            except Exception as e:
+                pass  # Continue even if file deletion fails
+
+    # Delete the video request (this will cascade delete clips)
+    video_request.delete()
+
+    return Response({
+        'message': 'Video request deleted successfully',
+        'deleted_clips': len(clips),
+        'deleted_files': deleted_files
+    })
+
+@api_view(['DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def delete_clip(request, clip_id):
+    """Delete a specific clip"""
+    try:
+        clip = Clip.objects.get(
+            id=clip_id,
+            video_request__user=request.user
+        )
+    except Clip.DoesNotExist:
+        raise Http404("Clip not found")
+
+    # Delete associated file
+    if clip.file_path and clip.file_path.name:
+        try:
+            if os.path.exists(clip.file_path.path):
+                os.remove(clip.file_path.path)
+        except Exception as e:
+            pass  # Continue even if file deletion fails
+
+    clip.delete()
+
+    return Response({'message': 'Clip deleted successfully'})
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def bulk_download_clips(request):
+    """Get download URLs for multiple clips"""
+    clip_ids = request.data.get('clip_ids', [])
+
+    if not clip_ids:
+        return Response({'error': 'No clip IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+    clips = Clip.objects.filter(
+        id__in=clip_ids,
+        video_request__user=request.user
+    ).select_related('video_request')
+
+    if len(clips) != len(clip_ids):
+        return Response({'error': 'Some clips not found or unauthorized'}, status=status.HTTP_404_NOT_FOUND)
+
+    download_info = []
+    for clip in clips:
+        download_info.append({
+            'clip_id': clip.id,
+            'filename': f"clip_{clip.id}_{clip.start_time}-{clip.end_time}s.mp4",
+            'download_url': f"/api/clipper/clips/{clip.id}/download/",
+            'duration': clip.duration,
+            'size_mb': clip.file_size_mb
+        })
+
+    return Response({
+        'clips': download_info,
+        'total_clips': len(download_info),
+        'estimated_total_size_mb': sum(clip.file_size_mb or 10 for clip in clips)  # Default 10MB if size unknown
+    })
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def get_rate_limit_status(request):
+    """Get current user's rate limit status and usage"""
+    try:
+        from core.models import UserCredits
+
+        # Get user's plan
+        try:
+            user_credits = UserCredits.objects.get(user=request.user)
+            plan_name = user_credits.plan.name if user_credits.plan else 'free'
+        except UserCredits.DoesNotExist:
+            plan_name = 'free'
+
+        # Define limits for different operations
+        plan_limits = {
+            'free': {
+                'general': 50,
+                'video_processing': 2,
+                'burst': 10
+            },
+            'pro': {
+                'general': 200,
+                'video_processing': 20,
+                'burst': 10
+            },
+            'premium': {
+                'general': 500,
+                'video_processing': 50,
+                'burst': 10
+            }
+        }
+
+        limits = plan_limits.get(plan_name, plan_limits['free'])
+
+        return Response({
+            'plan': plan_name,
+            'limits': {
+                'general_requests_per_hour': limits['general'],
+                'video_processing_per_hour': limits['video_processing'],
+                'burst_requests_per_minute': limits['burst']
+            },
+            'features': {
+                'priority_processing': plan_name in ['pro', 'premium'],
+                'advanced_settings': plan_name in ['pro', 'premium'],
+                'unlimited_downloads': plan_name == 'premium'
+            }
+        })
+
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

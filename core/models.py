@@ -146,6 +146,35 @@ class VideoRequest(models.Model):
     clip_duration = models.FloatField(default=30.0)
     max_clips = models.IntegerField(default=10)
 
+    # NEW VIDEO FORMAT FIELDS
+    output_format = models.CharField(
+        max_length=20,
+        choices=[
+            ('horizontal', 'Horizontal (16:9)'),
+            ('vertical', 'Vertical (9:16)'),
+            ('square', 'Square (1:1)'),
+            ('custom', 'Custom Aspect Ratio')
+        ],
+        default='horizontal'
+    )
+    custom_width = models.IntegerField(null=True, blank=True, help_text="Custom width in pixels")
+    custom_height = models.IntegerField(null=True, blank=True, help_text="Custom height in pixels")
+    social_platform = models.CharField(
+        max_length=20,
+        choices=[
+            ('youtube', 'YouTube'),
+            ('tiktok', 'TikTok'),
+            ('instagram_story', 'Instagram Story'),
+            ('instagram_post', 'Instagram Post'),
+            ('instagram_reel', 'Instagram Reel'),
+            ('facebook_post', 'Facebook Post'),
+            ('twitter', 'Twitter/X'),
+            ('linkedin', 'LinkedIn'),
+            ('custom', 'Custom')
+        ],
+        default='youtube'
+    )
+
     # Metadata fields
     processing_settings = models.JSONField(default=dict, blank=True)  # Store all processing settings
     estimated_processing_time = models.FloatField(null=True, blank=True)  # In minutes
@@ -228,5 +257,105 @@ class CaptionSettings(models.Model):
 
     def __str__(self):
         return f"Captions for {self.video_request.id}"
+
+
+# ==============================================================================
+# PAYMENT AND BILLING MODELS
+# ==============================================================================
+
+class StripeCustomer(models.Model):
+    """Store Stripe customer information"""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='stripe_customer')
+    stripe_customer_id = models.CharField(max_length=255, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Stripe Customer {self.stripe_customer_id} for {self.user.email}"
+
+
+class Subscription(models.Model):
+    """Track user subscriptions"""
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('canceled', 'Canceled'),
+        ('incomplete', 'Incomplete'),
+        ('incomplete_expired', 'Incomplete Expired'),
+        ('past_due', 'Past Due'),
+        ('unpaid', 'Unpaid'),
+        ('trialing', 'Trialing'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscriptions')
+    stripe_subscription_id = models.CharField(max_length=255, unique=True)
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='incomplete')
+    current_period_start = models.DateTimeField()
+    current_period_end = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.email} - {self.plan.name} ({self.status})"
+
+    @property
+    def is_active(self):
+        return self.status in ['active', 'trialing']
+
+
+class PaymentHistory(models.Model):
+    """Track all payment transactions"""
+    PAYMENT_TYPE_CHOICES = [
+        ('subscription', 'Subscription'),
+        ('credit_purchase', 'Credit Purchase'),
+        ('refund', 'Refund'),
+    ]
+
+    STATUS_CHOICES = [
+        ('succeeded', 'Succeeded'),
+        ('pending', 'Pending'),
+        ('failed', 'Failed'),
+        ('canceled', 'Canceled'),
+        ('refunded', 'Refunded'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payment_history')
+    stripe_payment_intent_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    stripe_invoice_id = models.CharField(max_length=255, null=True, blank=True)
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)  # In dollars
+    currency = models.CharField(max_length=3, default='USD')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    description = models.TextField(blank=True)
+    credits_added = models.IntegerField(default=0)  # Credits added from this payment
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.email} - ${self.amount} ({self.status})"
+
+
+class CreditPurchase(models.Model):
+    """Track one-time credit purchases"""
+    CREDIT_PACKAGES = [
+        (50, '50 Credits - $9.99'),
+        (100, '100 Credits - $19.99'),
+        (250, '250 Credits - $39.99'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='credit_purchases')
+    payment_history = models.OneToOneField(PaymentHistory, on_delete=models.CASCADE, related_name='credit_purchase')
+    credits_purchased = models.IntegerField()
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.credits_purchased} credits for ${self.amount_paid}"
 
 

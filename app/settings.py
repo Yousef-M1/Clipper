@@ -46,10 +46,12 @@ INSTALLED_APPS = [
     'corsheaders',
     'core',
     'user',
+    'payments',
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',  # Move to top for CORS
+    'core.middleware.WebhookThrottleMiddleware',  # Webhook throttling
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -57,6 +59,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.RateLimitHeaderMiddleware',  # Rate limit headers (after auth)
 ]
 
 ROOT_URLCONF = 'app.urls'
@@ -170,6 +173,24 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/hour',           # Anonymous users: 30 requests per hour
+        'user': '100/hour',          # Authenticated users: 100 requests per hour
+        'free': '50/hour',           # Free plan users: 50 requests per hour
+        'pro': '200/hour',           # Pro plan users: 200 requests per hour
+        'premium': '500/hour',       # Premium plan users: 500 requests per hour
+        'video_processing': '10/hour',  # Video processing: 10 per hour (expensive operation)
+        'video_processing_free': '2/hour',    # Free users: 2 video processes per hour
+        'video_processing_pro': '20/hour',    # Pro users: 20 video processes per hour
+        'video_processing_premium': '50/hour', # Premium users: 50 video processes per hour
+        'burst': '10/min',           # Burst protection: 10 requests per minute
+        'payment': '20/hour',        # Payment operations: 20 per hour
+        'webhook': '1000/hour',      # Webhooks: 1000 per hour (Stripe can send many)
+    }
 }
 
 # ==============================================================================
@@ -201,6 +222,30 @@ CORS_ALLOWED_HEADERS = [
 # ==============================================================================
 # Make sure to set this in your environment variables
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+
+# ==============================================================================
+# STRIPE CONFIGURATION
+# ==============================================================================
+STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+
+# Stripe pricing configuration
+STRIPE_PRICE_IDS = {
+    'free': None,  # Free plan has no Stripe price ID
+    'pro': os.environ.get('STRIPE_PRO_PRICE_ID'),  # Monthly pro subscription
+    'premium': os.environ.get('STRIPE_PREMIUM_PRICE_ID'),  # Monthly premium subscription
+}
+
+# One-time credit purchase price IDs (optional for additional credit purchases)
+STRIPE_CREDIT_PRICE_IDS = {
+    '50_credits': os.environ.get('STRIPE_50_CREDITS_PRICE_ID'),
+    '100_credits': os.environ.get('STRIPE_100_CREDITS_PRICE_ID'),
+    '250_credits': os.environ.get('STRIPE_250_CREDITS_PRICE_ID'),
+}
+
+# Frontend URL for Stripe redirects
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # ==============================================================================
 # LOGGING CONFIGURATION

@@ -105,6 +105,11 @@ def process_video_request(self, video_request_id, processing_settings=None):
             'compression_level': 'balanced',  # 'high_quality', 'balanced', 'compressed'
             'caption_style': 'modern_purple',  # 'modern_purple', 'tiktok_style', 'youtube_style', etc.
             'enable_word_highlighting': True,
+            # NEW FORMAT OPTIONS
+            'output_format': 'horizontal',  # 'horizontal', 'vertical', 'square', 'custom'
+            'social_platform': 'youtube',  # 'youtube', 'tiktok', 'instagram_story', etc.
+            'custom_width': None,
+            'custom_height': None,
         }
 
     video_request = VideoRequest.objects.get(id=video_request_id)
@@ -191,7 +196,7 @@ def process_video_request(self, video_request_id, processing_settings=None):
                     if srt_file_path:
                         logger.info(f"Created styled SRT file: {srt_file_path}")
 
-                # Create video clip with quality control
+                # Create video clip with quality control and format options
                 logger.info(f"Creating quality-controlled video clip: {output_path}")
 
                 create_quality_controlled_clip(
@@ -201,7 +206,10 @@ def process_video_request(self, video_request_id, processing_settings=None):
                     output_path,
                     quality=processing_settings['video_quality'],
                     compression=processing_settings['compression_level'],
-                    subtitles_srt=srt_file_path
+                    subtitles_srt=srt_file_path,
+                    output_format=processing_settings.get('output_format', 'horizontal'),
+                    custom_width=processing_settings.get('custom_width'),
+                    custom_height=processing_settings.get('custom_height')
                 )
 
                 # Verify clip creation
@@ -301,6 +309,11 @@ def process_video_with_custom_settings(video_request_id, **kwargs):
         'compression_level': kwargs.get('compression_level', 'balanced'),
         'caption_style': kwargs.get('caption_style', 'modern_purple'),
         'enable_word_highlighting': kwargs.get('enable_word_highlighting', True),
+        # NEW FORMAT OPTIONS
+        'output_format': kwargs.get('output_format', 'horizontal'),
+        'social_platform': kwargs.get('social_platform', 'youtube'),
+        'custom_width': kwargs.get('custom_width'),
+        'custom_height': kwargs.get('custom_height'),
     }
 
     return process_video_request(video_request_id, settings)

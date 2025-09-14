@@ -194,7 +194,10 @@ def create_quality_controlled_clip(
     output_path: str,
     quality: str = '720p',
     compression: str = 'balanced',
-    subtitles_srt: Optional[str] = None
+    subtitles_srt: Optional[str] = None,
+    output_format: str = 'horizontal',
+    custom_width: Optional[int] = None,
+    custom_height: Optional[int] = None
 ):
     """
     Enhanced version of create_clip with quality control and subtitle burning
@@ -227,29 +230,67 @@ def create_quality_controlled_clip(
             "-movflags", "+faststart"
         ]
 
-        # Add resolution scaling and subtitle burning
-        target_width, target_height = quality_manager.quality_preset['resolution']
+        # Import video format manager
+        from .video_formats import VideoFormatManager
 
+        # Determine target dimensions based on format
+        if output_format == 'custom' and custom_width and custom_height:
+            target_width, target_height = custom_width, custom_height
+        else:
+            # Get dimensions from format manager
+            dimensions = VideoFormatManager.get_dimensions_for_quality(output_format, quality)
+            if dimensions:
+                target_width, target_height = dimensions
+            else:
+                # Fallback to default quality preset
+                target_width, target_height = quality_manager.quality_preset['resolution']
+
+        logger.info(f"Target output format: {output_format} ({target_width}x{target_height})")
+
+        # Build video filter chain
+        video_filters = []
+
+        # First, get input dimensions for cropping calculation
+        try:
+            # Use ffprobe to get input video dimensions
+            probe_cmd = [
+                "ffprobe", "-v", "quiet", "-print_format", "json",
+                "-show_streams", "-select_streams", "v:0", input_path
+            ]
+            probe_result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            import json
+            probe_data = json.loads(probe_result.stdout)
+            input_width = int(probe_data['streams'][0]['width'])
+            input_height = int(probe_data['streams'][0]['height'])
+
+            # Add crop filter if needed to maintain aspect ratio
+            crop_filter = VideoFormatManager.get_crop_filter(output_format, input_width, input_height)
+            if crop_filter:
+                video_filters.append(crop_filter)
+                logger.info(f"Adding crop filter: {crop_filter}")
+
+        except Exception as e:
+            logger.warning(f"Could not determine input dimensions for cropping: {e}")
+
+        # Add scaling filter
+        scale_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        video_filters.append(scale_filter)
+
+        # Add subtitle filter if subtitles exist
         if subtitles_srt and os.path.exists(subtitles_srt):
             # Escape the subtitle path for FFmpeg
             escaped_srt = subtitles_srt.replace("\\", "\\\\").replace(":", "\\:")
+            video_filters.append(f"subtitles={escaped_srt}")
 
-            # DEBUG: Log subtitle file details
             logger.info(f"Using subtitle file: {subtitles_srt}")
-            logger.info(f"Subtitle file exists: {os.path.exists(subtitles_srt)}")
-            logger.info(f"File extension: {os.path.splitext(subtitles_srt)[1]}")
-
-            # Combine scaling and subtitle burning WITHOUT force_style to allow HTML formatting
-            video_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2,subtitles={escaped_srt}"
-            cmd.extend(["-vf", video_filter])
-
-            # DEBUG: Log the complete FFmpeg command
-            logger.info(f"FFmpeg video filter: {video_filter}")
         else:
             logger.warning(f"No subtitle file found or file doesn't exist: {subtitles_srt}")
-            # Just scaling without subtitles
-            video_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2"
-            cmd.extend(["-vf", video_filter])
+
+        # Combine all video filters
+        video_filter = ",".join(video_filters)
+        cmd.extend(["-vf", video_filter])
+
+        logger.info(f"FFmpeg video filter chain: {video_filter}")
 
         # Add output file
         cmd.append(output_path)

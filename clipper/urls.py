@@ -16,6 +16,19 @@ urlpatterns = [
     path('options/quality-presets/', views.get_quality_presets, name='quality-presets'),
     path('options/compression-levels/', views.get_compression_levels, name='compression-levels'),
     path('options/caption-styles/', views.get_caption_styles, name='caption-styles'),
+    path('options/video-formats/', views.get_video_formats, name='video-formats'),
+    path('options/platform-presets/', views.get_platform_presets, name='platform-presets'),
     path('options/processing-options/', views.get_processing_options, name='processing-options'),
     path('options/estimate-cost/', views.estimate_processing_cost, name='estimate-cost'),
+
+    # Dashboard endpoints
+    path('dashboard/summary/', views.dashboard_summary, name='dashboard-summary'),
+    path('video-requests/<int:pk>/detail/', views.VideoRequestDetailView.as_view(), name='video-request-detail'),
+    path('clips/<int:clip_id>/download/', views.download_clip, name='download-clip'),
+    path('video-requests/<int:video_request_id>/delete/', views.delete_video_request, name='delete-video-request'),
+    path('clips/<int:clip_id>/delete/', views.delete_clip, name='delete-clip'),
+    path('clips/bulk-download/', views.bulk_download_clips, name='bulk-download-clips'),
+
+    # Rate limiting status
+    path('rate-limits/', views.get_rate_limit_status, name='rate-limit-status'),
 ]
