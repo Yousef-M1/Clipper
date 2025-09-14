@@ -1,0 +1,19 @@
+# Enhanced Scene Detection Dependencies - CutMagic-like functionality
+
+# Computer Vision
+opencv-python==4.8.1.78
+scikit-learn==1.3.2
+scipy==1.11.4
+
+# Image Processing
+pillow>=10.0.0
+numpy>=1.24.3
+
+# Optional: Advanced Computer Vision (install only if needed)
+# mediapipe==0.10.8  # For advanced pose/face detection
+# torch>=2.0.0       # For deep learning models
+# torchvision>=0.15.0
+
+# Already in your requirements.txt:
+# moviepy>=1.0.3     # For video processing
+# openai>=1.0.0      # For AI analysis

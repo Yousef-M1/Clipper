@@ -33,6 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     imagemagick \
     # For yt-dlp and headless processing
     xvfb \
+    # Computer vision dependencies for OpenCV
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgthread-2.0-0 \
     # Python compilation dependencies
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -52,6 +59,19 @@ RUN /py/bin/pip install --no-cache-dir \
     imageio[ffmpeg] \
     imageio-ffmpeg \
     && /py/bin/pip install --no-cache-dir moviepy==1.0.3
+
+# Install computer vision dependencies for scene detection
+RUN /py/bin/pip install --no-cache-dir \
+    opencv-python-headless==4.8.1.78 \
+    numpy>=1.24.0 \
+    scikit-learn>=1.3.0
+
+# Install social media publishing dependencies
+RUN /py/bin/pip install --no-cache-dir \
+    requests>=2.31.0 \
+    requests-oauthlib>=1.3.1 \
+    python-dateutil>=2.8.2 \
+    Pillow>=10.0.0
 
 # Install remaining requirements
 RUN /py/bin/pip install --no-cache-dir -r /app/requirements.txt

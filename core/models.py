@@ -359,3 +359,180 @@ class CreditPurchase(models.Model):
         return f"{self.user.email} - {self.credits_purchased} credits for ${self.amount_paid}"
 
 
+# ==============================================================================
+# QUEUE MANAGEMENT MODELS
+# ==============================================================================
+
+class ProcessingQueue(models.Model):
+    """Queue for video processing tasks with priority management"""
+
+    PRIORITY_CHOICES = [
+        (1, 'Low Priority (Free Users)'),
+        (2, 'Normal Priority (Pro Users)'),
+        (3, 'High Priority (Premium Users)'),
+        (4, 'Critical Priority (Admin/Support)'),
+    ]
+
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    video_request = models.OneToOneField(VideoRequest, on_delete=models.CASCADE, related_name='queue_entry')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    priority = models.IntegerField(choices=PRIORITY_CHOICES, default=1)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='queued')
+
+    # Timing information
+    queued_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    # Processing details
+    estimated_duration = models.FloatField(null=True, blank=True, help_text="Estimated processing time in minutes")
+    actual_duration = models.FloatField(null=True, blank=True, help_text="Actual processing time in minutes")
+    worker_id = models.CharField(max_length=100, blank=True, help_text="ID of the worker processing this task")
+
+    # Error handling
+    error_message = models.TextField(blank=True)
+    retry_count = models.IntegerField(default=0)
+    max_retries = models.IntegerField(default=3)
+
+    # Metadata
+    processing_settings = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-priority', 'queued_at']  # Higher priority first, then FIFO
+        indexes = [
+            models.Index(fields=['status', 'priority', 'queued_at']),
+            models.Index(fields=['user', 'status']),
+        ]
+
+    def __str__(self):
+        return f"Queue #{self.id} - {self.user.email} ({self.get_status_display()})"
+
+    @property
+    def queue_position(self):
+        """Get position in queue for queued tasks"""
+        if self.status != 'queued':
+            return None
+
+        return ProcessingQueue.objects.filter(
+            status='queued',
+            priority__gt=self.priority
+        ).count() + ProcessingQueue.objects.filter(
+            status='queued',
+            priority=self.priority,
+            queued_at__lt=self.queued_at
+        ).count() + 1
+
+    @property
+    def estimated_wait_time(self):
+        """Estimate wait time based on queue position and processing times"""
+        position = self.queue_position
+        if not position:
+            return None
+
+        # Average processing time (in minutes) - can be improved with actual data
+        avg_processing_time = 5.0  # 5 minutes average
+
+        # Count currently processing tasks
+        processing_count = ProcessingQueue.objects.filter(status='processing').count()
+
+        # Estimate based on position and current processing
+        estimated_minutes = (position - 1) * avg_processing_time
+        if processing_count > 0:
+            estimated_minutes += avg_processing_time  # Add time for current processing
+
+        return max(1, estimated_minutes)  # Minimum 1 minute
+
+    def get_priority_display_color(self):
+        """Get color for priority display"""
+        colors = {
+            1: '#gray',      # Low
+            2: '#blue',      # Normal
+            3: '#orange',    # High
+            4: '#red',       # Critical
+        }
+        return colors.get(self.priority, '#gray')
+
+
+class QueueStats(models.Model):
+    """Daily statistics for queue performance"""
+    date = models.DateField(unique=True)
+
+    # Task counts
+    total_queued = models.IntegerField(default=0)
+    total_processed = models.IntegerField(default=0)
+    total_failed = models.IntegerField(default=0)
+
+    # Timing stats
+    avg_wait_time = models.FloatField(default=0.0, help_text="Average wait time in minutes")
+    avg_processing_time = models.FloatField(default=0.0, help_text="Average processing time in minutes")
+    max_queue_length = models.IntegerField(default=0)
+
+    # User tier breakdown
+    free_users_processed = models.IntegerField(default=0)
+    pro_users_processed = models.IntegerField(default=0)
+    premium_users_processed = models.IntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"Queue Stats for {self.date}"
+
+
+class NotificationEvent(models.Model):
+    """Track notification events for processing completion"""
+
+    EVENT_TYPES = [
+        ('processing_started', 'Processing Started'),
+        ('processing_completed', 'Processing Completed'),
+        ('processing_failed', 'Processing Failed'),
+        ('queue_delayed', 'Queue Delayed'),
+    ]
+
+    NOTIFICATION_TYPES = [
+        ('email', 'Email'),
+        ('webhook', 'Webhook'),
+        ('sms', 'SMS'),  # For future
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('sent', 'Sent'),
+        ('failed', 'Failed'),
+        ('skipped', 'Skipped'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    queue_entry = models.ForeignKey(ProcessingQueue, on_delete=models.CASCADE, related_name='notifications')
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
+    notification_type = models.CharField(max_length=10, choices=NOTIFICATION_TYPES, default='email')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+
+    # Content
+    subject = models.CharField(max_length=200, blank=True)
+    message = models.TextField(blank=True)
+
+    # Delivery info
+    recipient = models.CharField(max_length=255)  # email address, phone, webhook URL
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.event_type} notification to {self.recipient} ({self.status})"
+
+

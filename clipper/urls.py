@@ -31,4 +31,16 @@ urlpatterns = [
 
     # Rate limiting status
     path('rate-limits/', views.get_rate_limit_status, name='rate-limit-status'),
+
+    # Queue management endpoints
+    path('queue/status/', views.get_queue_status, name='queue-status'),
+    path('queue/history/', views.get_processing_history, name='processing-history'),
+    path('queue/<int:queue_id>/cancel/', views.cancel_processing, name='cancel-processing'),
+    path('queue/<int:queue_id>/retry/', views.retry_processing, name='retry-processing'),
+
+    # Enhanced Scene Detection endpoints - CutMagic-like functionality
+    path('analysis/composition/', views.analyze_video_composition, name='analyze-composition'),
+    path('analysis/enhanced-moments/', views.detect_enhanced_moments, name='enhanced-moments'),
+    path('analysis/scene-transitions/', views.detect_scene_transitions, name='scene-transitions'),
+    path('analysis/capabilities/', views.get_scene_detection_capabilities, name='scene-capabilities'),
 ]

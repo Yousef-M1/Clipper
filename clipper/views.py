@@ -21,6 +21,8 @@ class VideoRequestCreateView(generics.CreateAPIView):
     throttle_classes = [VideoProcessingThrottle, BurstProtectionThrottle]
 
     def perform_create(self, serializer):
+        from core.queue_manager import QueueManager
+
         video_request = serializer.save(user=self.request.user)
 
         # Get processing settings from request data
@@ -28,24 +30,29 @@ class VideoRequestCreateView(generics.CreateAPIView):
 
         # Default settings if not provided
         default_settings = {
-            'moment_detection_type': 'ai_powered',
+            'moment_detection_type': 'enhanced_ai',  # Now defaults to enhanced detection
             'clip_duration': 30.0,
             'max_clips': 10,
             'video_quality': '720p',
             'compression_level': 'balanced',
             'caption_style': 'modern_purple',
             'enable_word_highlighting': True,
+            'enable_scene_detection': True,  # NEW: Enable visual scene detection
+            'enable_composition_analysis': True,  # NEW: Enable composition scoring
         }
 
         # Merge with defaults
         final_settings = {**default_settings, **processing_settings}
 
-        # Start processing with custom settings
-        if processing_settings:
-            process_video_with_custom_settings.delay(video_request.id, **final_settings)
-        else:
-            # Use default processing
-            process_video_request.delay(video_request.id)
+        # Add to queue instead of direct processing
+        queue_entry = QueueManager.add_to_queue(video_request, final_settings)
+
+        # Log queue position for user feedback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Video request {video_request.id} queued at position #{queue_entry.queue_position}")
+
+        return video_request
 
 class EnhancedVideoRequestCreateView(generics.CreateAPIView):
     """Video request creation with full control over processing settings"""
@@ -67,14 +74,17 @@ class EnhancedVideoRequestCreateView(generics.CreateAPIView):
         # Validate processing settings
         validated_settings = self.validate_processing_settings(processing_settings)
 
-        # Start processing task
-        process_video_with_custom_settings.delay(video_request.id, **validated_settings)
+        # Add to queue instead of direct processing
+        from core.queue_manager import QueueManager
+        queue_entry = QueueManager.add_to_queue(video_request, validated_settings)
 
         return Response({
             'id': video_request.id,
             'url': video_request.url,
             'status': video_request.status,
-            'processing_settings': validated_settings
+            'processing_settings': validated_settings,
+            'queue_position': queue_entry.queue_position,
+            'estimated_wait_time': queue_entry.estimated_wait_time
         }, status=status.HTTP_201_CREATED)
 
     def validate_processing_settings(self, settings):
@@ -596,3 +606,319 @@ def get_rate_limit_status(request):
 
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# QUEUE MANAGEMENT ENDPOINTS
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def get_queue_status(request):
+    """Get user's queue status and system queue info"""
+    from core.queue_manager import QueueManager
+
+    user_queue_status = QueueManager.get_queue_status(request.user)
+
+    return Response({
+        'user_queue': user_queue_status['user_queue'],
+        'system_status': {
+            'total_queued': user_queue_status['queue_length'],
+            'currently_processing': user_queue_status['processing_count']
+        },
+        'user_priority': QueueManager.get_user_priority(request.user),
+        'priority_description': {
+            1: 'Free - Lower priority',
+            2: 'Pro - Normal priority',
+            3: 'Premium - High priority'
+        }.get(QueueManager.get_user_priority(request.user), 'Unknown')
+    })
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_processing_history(request):
+    """Get user's processing history"""
+    from core.models import ProcessingQueue
+
+    limit = int(request.GET.get('limit', 10))
+
+    history = ProcessingQueue.objects.filter(
+        user=request.user
+    ).order_by('-completed_at')[:limit]
+
+    history_data = []
+    for entry in history:
+        history_data.append({
+            'id': entry.id,
+            'video_url': entry.video_request.url,
+            'status': entry.status,
+            'priority': entry.priority,
+            'queued_at': entry.queued_at,
+            'started_at': entry.started_at,
+            'completed_at': entry.completed_at,
+            'actual_duration': entry.actual_duration,
+            'clips_generated': entry.video_request.clips.count(),
+            'error_message': entry.error_message if entry.status == 'failed' else None
+        })
+
+    return Response({
+        'history': history_data,
+        'total_processed': ProcessingQueue.objects.filter(
+            user=request.user,
+            status__in=['completed', 'failed']
+        ).count()
+    })
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def cancel_processing(request, queue_id):
+    """Cancel a queued processing task"""
+    from core.models import ProcessingQueue
+    from core.queue_manager import QueueManager
+
+    try:
+        queue_entry = ProcessingQueue.objects.get(
+            id=queue_id,
+            user=request.user
+        )
+
+        success = QueueManager.cancel_task(queue_entry)
+
+        if success:
+            return Response({
+                'message': 'Processing task cancelled successfully',
+                'status': queue_entry.status
+            })
+        else:
+            return Response({
+                'error': 'Cannot cancel task - it may already be processing or completed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    except ProcessingQueue.DoesNotExist:
+        return Response({'error': 'Queue entry not found'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def retry_processing(request, queue_id):
+    """Retry a failed processing task"""
+    from core.models import ProcessingQueue
+    from core.queue_manager import QueueManager
+
+    try:
+        queue_entry = ProcessingQueue.objects.get(
+            id=queue_id,
+            user=request.user
+        )
+
+        success = QueueManager.retry_failed_task(queue_entry)
+
+        if success:
+            return Response({
+                'message': 'Processing task queued for retry',
+                'status': queue_entry.status,
+                'retry_count': queue_entry.retry_count,
+                'queue_position': queue_entry.queue_position
+            })
+        else:
+            return Response({
+                'error': 'Cannot retry task - maximum retries exceeded or task is not failed'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    except ProcessingQueue.DoesNotExist:
+        return Response({'error': 'Queue entry not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+# ENHANCED SCENE DETECTION ENDPOINTS - CutMagic-like functionality
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def analyze_video_composition(request):
+    """
+    Analyze video composition and provide insights
+    Similar to Quaso's comprehensive video analysis
+    """
+    from clipper.scene_detection import analyze_video_composition as analyze_composition
+
+    try:
+        video_request_id = request.data.get('video_request_id')
+        if not video_request_id:
+            return Response({'error': 'video_request_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get video request
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+
+        # Check if file exists
+        if not video_request.video_file or not os.path.exists(video_request.video_file.path):
+            return Response({'error': 'Video file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Analyze composition
+        analysis = analyze_composition(video_request.video_file.path)
+
+        return Response({
+            'video_id': video_request_id,
+            'analysis': analysis,
+            'message': 'Video composition analysis completed'
+        })
+
+    except VideoRequest.DoesNotExist:
+        return Response({'error': 'Video request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def detect_enhanced_moments(request):
+    """
+    Enhanced moment detection with visual scene analysis
+    Combines AI transcript analysis with visual scene detection
+    """
+    from clipper.ai_moments import detect_ai_moments_with_composition
+
+    try:
+        video_request_id = request.data.get('video_request_id')
+        clip_duration = float(request.data.get('clip_duration', 30.0))
+        max_clips = int(request.data.get('max_clips', 10))
+        enable_scene_detection = request.data.get('enable_scene_detection', True)
+
+        if not video_request_id:
+            return Response({'error': 'video_request_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get video request
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+
+        # Check if file exists
+        if not video_request.video_file or not os.path.exists(video_request.video_file.path):
+            return Response({'error': 'Video file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get transcript (simplified for now)
+        transcript = []  # You can integrate with your existing transcript generation
+
+        # Run enhanced detection
+        results = detect_ai_moments_with_composition(
+            video_request.video_file.path,
+            transcript,
+            clip_duration,
+            max_clips,
+            enable_scene_detection
+        )
+
+        return Response({
+            'video_id': video_request_id,
+            'moments': results['moments'],
+            'video_analysis': results['video_analysis'],
+            'recommendations': results['recommendations'],
+            'quality_score': results['quality_score'],
+            'total_moments_found': len(results['moments']),
+            'message': 'Enhanced moment detection completed'
+        })
+
+    except VideoRequest.DoesNotExist:
+        return Response({'error': 'Video request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def detect_scene_transitions(request):
+    """
+    Detect scene transitions and cuts
+    Similar to Quaso's CutMagic automatic scene detection
+    """
+    from clipper.scene_detection import detect_enhanced_scenes
+
+    try:
+        video_request_id = request.data.get('video_request_id')
+        max_scenes = int(request.data.get('max_scenes', 20))
+
+        if not video_request_id:
+            return Response({'error': 'video_request_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get video request
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+
+        # Check if file exists
+        if not video_request.video_file or not os.path.exists(video_request.video_file.path):
+            return Response({'error': 'Video file not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Detect scenes
+        scenes = detect_enhanced_scenes(video_request.video_file.path, max_scenes)
+
+        # Format for API response
+        formatted_scenes = []
+        for scene in scenes:
+            formatted_scenes.append({
+                'start_time': scene['start'],
+                'end_time': scene['end'],
+                'duration': scene['end'] - scene['start'],
+                'shot_type': scene.get('visual_features', {}).get('shot_type', 'unknown'),
+                'composition_score': scene['score'],
+                'faces_detected': scene.get('visual_features', {}).get('face_count', 0),
+                'motion_intensity': scene.get('visual_features', {}).get('motion_intensity', 0.5),
+                'text_detected': scene.get('visual_features', {}).get('text_detected', False),
+                'reason': scene.get('reason', 'Visual scene detected'),
+                'tags': scene.get('tags', [])
+            })
+
+        return Response({
+            'video_id': video_request_id,
+            'scenes': formatted_scenes,
+            'total_scenes': len(formatted_scenes),
+            'message': f'Detected {len(formatted_scenes)} scene transitions'
+        })
+
+    except VideoRequest.DoesNotExist:
+        return Response({'error': 'Video request not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_scene_detection_capabilities(request):
+    """
+    Get available scene detection capabilities and settings
+    """
+    return Response({
+        'features': {
+            'visual_scene_detection': True,
+            'shot_type_classification': True,
+            'face_detection': True,
+            'motion_analysis': True,
+            'text_detection': True,
+            'composition_scoring': True,
+            'color_analysis': True
+        },
+        'shot_types': [
+            'close_up',
+            'medium_shot',
+            'wide_shot',
+            'extreme_close_up',
+            'talking_head',
+            'action_shot',
+            'transition'
+        ],
+        'analysis_features': [
+            'scene_boundaries',
+            'composition_quality',
+            'face_count_per_scene',
+            'motion_intensity',
+            'dominant_colors',
+            'text_regions',
+            'virality_scoring'
+        ],
+        'supported_formats': ['mp4', 'avi', 'mov', 'mkv'],
+        'max_duration_minutes': 180,  # 3 hours
+        'message': 'Enhanced scene detection powered by computer vision'
+    })
