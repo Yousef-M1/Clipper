@@ -52,7 +52,7 @@ def detect_ai_moments(video_path: str, transcript: List[Dict], clip_duration: fl
 
         # Call OpenAI API
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a video content analyst expert at identifying viral and engaging moments."},
                 {"role": "user", "content": ai_prompt}

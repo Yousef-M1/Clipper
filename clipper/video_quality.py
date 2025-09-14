@@ -1,6 +1,6 @@
 from typing import Dict, Optional, Tuple
 import logging
-
+import os
 logger = logging.getLogger(__name__)
 
 class VideoQualityManager:
@@ -197,65 +197,78 @@ def create_quality_controlled_clip(
     subtitles_srt: Optional[str] = None
 ):
     """
-    Enhanced version of create_clip with quality control
+    Enhanced version of create_clip with quality control and subtitle burning
     """
-    from moviepy.editor import VideoFileClip
+    import subprocess
 
     quality_manager = VideoQualityManager(quality, compression)
 
     try:
-        with VideoFileClip(input_path) as video:
-            # Extract clip
-            clip = video.subclip(start_time, end_time)
+        # Make sure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-            # Get target resolution
-            target_width, target_height = quality_manager.quality_preset['resolution']
+        # Build FFmpeg command with quality settings and subtitle burning
+        cmd = [
+            "ffmpeg",
+            "-y",  # overwrite output
+            "-ss", str(start_time),  # start time
+            "-i", input_path,  # input video
+            "-t", str(end_time - start_time),  # duration
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-crf", str(quality_manager.quality_preset['crf'] + quality_manager.compression_level['crf_modifier']),
+            "-preset", quality_manager.compression_level['preset'],
+            "-profile:v", quality_manager.compression_level['profile'],
+            "-level", quality_manager.compression_level['level'],
+            "-b:a", quality_manager.quality_preset['audio_bitrate'],
+            "-ar", "44100",
+            "-ac", "2",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart"
+        ]
 
-            # Resize if necessary while maintaining aspect ratio
-            original_aspect = video.w / video.h
-            target_aspect = target_width / target_height
+        # Add resolution scaling and subtitle burning
+        target_width, target_height = quality_manager.quality_preset['resolution']
 
-            if original_aspect > target_aspect:
-                # Video is wider, fit to width
-                new_width = target_width
-                new_height = int(target_width / original_aspect)
-            else:
-                # Video is taller, fit to height
-                new_height = target_height
-                new_width = int(target_height * original_aspect)
+        if subtitles_srt and os.path.exists(subtitles_srt):
+            # Escape the subtitle path for FFmpeg
+            escaped_srt = subtitles_srt.replace("\\", "\\\\").replace(":", "\\:")
 
-            # Only resize if different from original
-            if (new_width, new_height) != (video.w, video.h):
-                clip = clip.resize((new_width, new_height))
+            # DEBUG: Log subtitle file details
+            logger.info(f"Using subtitle file: {subtitles_srt}")
+            logger.info(f"Subtitle file exists: {os.path.exists(subtitles_srt)}")
+            logger.info(f"File extension: {os.path.splitext(subtitles_srt)[1]}")
 
-            # Get encoding parameters
-            moviepy_params = quality_manager.get_moviepy_params()
+            # Combine scaling and subtitle burning WITHOUT force_style to allow HTML formatting
+            video_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2,subtitles={escaped_srt}"
+            cmd.extend(["-vf", video_filter])
 
-            # Add subtitles if provided
-            if subtitles_srt and os.path.exists(subtitles_srt):
-                # For advanced subtitle styling, you'd use FFmpeg directly
-                # This is a simplified version using MoviePy
-                pass
+            # DEBUG: Log the complete FFmpeg command
+            logger.info(f"FFmpeg video filter: {video_filter}")
+        else:
+            logger.warning(f"No subtitle file found or file doesn't exist: {subtitles_srt}")
+            # Just scaling without subtitles
+            video_filter = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2"
+            cmd.extend(["-vf", video_filter])
 
-            # Write video with quality settings
-            clip.write_videofile(
-                output_path,
-                **moviepy_params,
-                audio_codec='aac',
-                temp_audiofile='temp-audio.m4a',
-                remove_temp=True,
-                verbose=False,
-                logger=None
-            )
+        # Add output file
+        cmd.append(output_path)
 
-            # Estimate and log file size
-            duration = end_time - start_time
-            estimated_size_mb, size_str = quality_manager.estimate_file_size(duration)
+        # Run FFmpeg command
+        logger.info(f"Creating quality-controlled clip with subtitles: {output_path}")
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
-            logger.info(f"Created {quality} clip: {output_path}")
-            logger.info(f"Quality: {quality_manager.get_quality_info()}")
-            logger.info(f"Estimated size: {size_str}")
+        # Estimate and log file size
+        duration = end_time - start_time
+        estimated_size_mb, size_str = quality_manager.estimate_file_size(duration)
 
+        logger.info(f"Created {quality} clip: {output_path}")
+        logger.info(f"Quality: {quality_manager.get_quality_info()}")
+        logger.info(f"Estimated size: {size_str}")
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise Exception(f"Failed to create quality controlled clip: {e.stderr}")
     except Exception as e:
         logger.error(f"Failed to create quality controlled clip: {e}")
         raise

@@ -15,29 +15,37 @@ from ..video_quality import VideoQualityManager, create_quality_controlled_clip
 logger = logging.getLogger(__name__)
 
 def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_word_highlighting=True):
-    """Enhanced SRT creation with styling and word highlighting."""
+    """Enhanced SRT creation with styling and word highlighting using real Whisper word timestamps."""
     # Clamp negative times and filter out invalid segments
     valid_segments = []
     for seg in segments:
         start = max(0, seg["start"])
         end = max(0, seg["end"])
         if end > start and seg["text"].strip():
-            valid_segments.append({
+            # Copy word-level data if available
+            segment_data = {
                 "start": start,
                 "end": end,
                 "text": seg["text"].strip()
-            })
+            }
+            if "words" in seg:
+                segment_data["words"] = seg["words"]
+            valid_segments.append(segment_data)
 
     if not valid_segments:
         logger.warning(f"No valid segments for SRT file: {srt_path}")
         return None
 
-    if enable_word_highlighting:
-        # Create styled subtitles with word highlighting
+    try:
         style_manager = CaptionStyleManager(style)
-        style_manager.create_word_level_srt(valid_segments, srt_path)
-    else:
-        # Create regular subtitles
+
+        # TEMPORARY: Use simple SRT to test if subtitles work at all
+        logger.info(f"Using simple SRT for testing subtitle rendering")
+        write_srt(valid_segments, srt_path)
+
+    except Exception as e:
+        logger.warning(f"Word-level highlighting failed ({e}), falling back to simple subtitles")
+        # Fallback to basic SRT
         write_srt(valid_segments, srt_path)
 
     if not os.path.isfile(srt_path):
@@ -159,11 +167,15 @@ def process_video_request(self, video_request_id, processing_settings=None):
                         adjusted_end = min(moment["end"] - moment["start"], seg["end"] - moment["start"])
 
                         if adjusted_end > adjusted_start:
-                            clip_segments.append({
+                            clip_segment = {
                                 "start": adjusted_start,
                                 "end": adjusted_end,
                                 "text": seg["text"]
-                            })
+                            }
+                            # CRITICAL: Copy word-level data if available for word highlighting
+                            if "words" in seg:
+                                clip_segment["words"] = seg["words"]
+                            clip_segments.append(clip_segment)
 
                 logger.info(f"Found {len(clip_segments)} subtitle segments for clip {idx + 1}")
 

@@ -47,28 +47,54 @@ def check_audio(video_path: str):
         return False
 
 def transcribe_with_whisper(video_path: str):
-    """Transcribe video audio using OpenAI Whisper or local fallback."""
+    """Transcribe video audio using local Whisper with word-level timestamps."""
     try:
-        with open(video_path, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="verbose_json"  # Get timestamps
-            )
-        # Convert to segments format
-        segments = []
-        if hasattr(transcript, 'segments'):
-            segments = transcript.segments
-        else:
-            # Fallback if no segments
-            segments = [{"start": 0.0, "end": 30.0, "text": transcript.text}]
-
-    except (RateLimitError, APIError, BadRequestError) as e:
-        print(f"OpenAI API failed ({e}), using local Whisper fallback.")
+        # Use local Whisper for word-level timestamps (OpenAI API doesn't support this)
+        logger.info("Loading Whisper model for word-level timestamps...")
         model = whisper.load_model("base")
-        result = model.transcribe(video_path)
-        segments = result.get("segments", [])
-    return segments
+        result = model.transcribe(video_path, word_timestamps=True)
+
+        segments = []
+        word_level_count = 0
+
+        for segment in result.get("segments", []):
+            # DEBUG: Check what's in each segment
+            logger.info(f"Processing segment: {segment.get('text', '')[:50]}...")
+            logger.info(f"Segment keys: {list(segment.keys())}")
+
+            # Check if word-level timestamps are available
+            if "words" in segment and segment["words"]:
+                word_level_count += 1
+                logger.info(f"Found {len(segment['words'])} words in segment")
+                logger.info(f"First few words: {[w.get('word', 'NO_WORD') for w in segment['words'][:3]]}")
+
+                # Add segment with word-level timing
+                segments.append({
+                    "start": segment.get("start", 0.0),
+                    "end": segment.get("end", 30.0),
+                    "text": segment.get("text", "").strip(),
+                    "words": segment["words"]  # Word-level timestamps
+                })
+            else:
+                logger.warning(f"No word-level data for segment: {segment.get('text', '')[:50]}")
+                # Fallback to segment-level only
+                segments.append({
+                    "start": segment.get("start", 0.0),
+                    "end": segment.get("end", 30.0),
+                    "text": segment.get("text", "").strip()
+                })
+
+        logger.info(f"Transcribed with {len(segments)} segments ({word_level_count} have word-level timestamps)")
+        return segments
+
+    except Exception as e:
+        logger.error(f"Whisper transcription failed: {e}")
+        # Ultimate fallback
+        return [{
+            "start": 0.0,
+            "end": 30.0,
+            "text": "Transcription failed"
+        }]
 
 def write_srt(segments, srt_path: str):
     """Write segments to an SRT subtitle file."""
