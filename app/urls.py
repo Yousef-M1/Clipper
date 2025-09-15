@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/clipper/', include('clipper.urls')),
     path('api/user/', include('user.urls')),
     path('api/payments/', include('payments.urls')),
+    path('api/social/', include('social_media.urls')),
 ]
 
 if settings.DEBUG:

@@ -576,3 +576,114 @@ class ContentCalendarDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return self.request.user.content_calendars.all()
+
+
+# OAuth Callback Views
+import os
+import requests
+from django.http import HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+
+@api_view(['GET'])
+@permission_classes([])  # No authentication required for OAuth callbacks
+@csrf_exempt
+def youtube_oauth_callback(request):
+    """Handle YouTube OAuth callback"""
+    code = request.GET.get('code')
+    state = request.GET.get('state')
+    error = request.GET.get('error')
+
+    if error:
+        return HttpResponse(f"<h1>OAuth Error</h1><p>Error: {error}</p>", status=400)
+
+    if not code:
+        return HttpResponse("<h1>OAuth Error</h1><p>No authorization code received</p>", status=400)
+
+    try:
+        # Exchange code for access token
+        token_url = "https://oauth2.googleapis.com/token"
+        token_data = {
+            'code': code,
+            'client_id': os.getenv('YOUTUBE_CLIENT_ID'),
+            'client_secret': os.getenv('YOUTUBE_CLIENT_SECRET'),
+            'redirect_uri': 'http://localhost:8000/api/social/youtube/callback/',
+            'grant_type': 'authorization_code'
+        }
+
+        token_response = requests.post(token_url, data=token_data)
+        token_info = token_response.json()
+
+        if 'access_token' not in token_info:
+            return HttpResponse(f"<h1>Token Error</h1><pre>{token_info}</pre>", status=400)
+
+        # Get user's YouTube channel info
+        channel_url = "https://www.googleapis.com/youtube/v3/channels"
+        headers = {'Authorization': f"Bearer {token_info['access_token']}"}
+        params = {'part': 'snippet,statistics', 'mine': True}
+
+        channel_response = requests.get(channel_url, headers=headers, params=params)
+        channel_info = channel_response.json()
+
+        if 'items' not in channel_info or not channel_info['items']:
+            return HttpResponse(f"<h1>Channel Error</h1><pre>{channel_info}</pre>", status=400)
+
+        channel_data = channel_info['items'][0]
+
+        # Success response with channel info
+        return HttpResponse(f"""
+        <h1>🎉 YouTube OAuth Success!</h1>
+        <p><strong>Channel:</strong> {channel_data['snippet']['title']}</p>
+        <p><strong>Subscribers:</strong> {channel_data['statistics'].get('subscriberCount', 'N/A')}</p>
+        <p><strong>Access Token:</strong> {token_info['access_token'][:50]}...</p>
+        <p><strong>Refresh Token:</strong> {token_info.get('refresh_token', 'N/A')}</p>
+        <p><strong>State:</strong> {state}</p>
+        <hr>
+        <p>✅ YouTube connection successful! You can now close this window.</p>
+        <p>Save this info for your social account connection:</p>
+        <ul>
+            <li>Channel ID: {channel_data['id']}</li>
+            <li>Channel Name: {channel_data['snippet']['title']}</li>
+            <li>Access Token: Ready for API calls</li>
+        </ul>
+        """)
+
+    except Exception as e:
+        return HttpResponse(f"<h1>OAuth Error</h1><p>Error: {str(e)}</p>", status=500)
+
+
+@api_view(['GET'])
+@permission_classes([])  # No authentication required for OAuth callbacks
+@csrf_exempt
+def tiktok_oauth_callback(request):
+    """Handle TikTok OAuth callback - placeholder for when approved"""
+    code = request.GET.get('code')
+    state = request.GET.get('state')
+
+    return HttpResponse(f"""
+    <h1>🎵 TikTok OAuth Callback</h1>
+    <p><strong>Status:</strong> Pending app approval</p>
+    <p><strong>Code:</strong> {code}</p>
+    <p><strong>State:</strong> {state}</p>
+    <p>✅ Authorization code received! Waiting for TikTok app approval to complete connection.</p>
+    """)
+
+
+@api_view(['GET'])
+@permission_classes([])  # No authentication required for OAuth callbacks
+@csrf_exempt
+def instagram_oauth_callback(request):
+    """Handle Instagram OAuth callback - placeholder for when developer access granted"""
+    code = request.GET.get('code')
+    state = request.GET.get('state')
+
+    return HttpResponse(f"""
+    <h1>📸 Instagram OAuth Callback</h1>
+    <p><strong>Status:</strong> Pending developer access</p>
+    <p><strong>Code:</strong> {code}</p>
+    <p><strong>State:</strong> {state}</p>
+    <p>✅ Authorization code received! Waiting for Instagram developer access to complete connection.</p>
+    """)

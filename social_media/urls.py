@@ -36,4 +36,9 @@ urlpatterns = [
     # Content calendars
     path('calendars/', views.ContentCalendarListCreateView.as_view(), name='calendar-list'),
     path('calendars/<int:pk>/', views.ContentCalendarDetailView.as_view(), name='calendar-detail'),
+
+    # OAuth callbacks
+    path('tiktok/callback/', views.tiktok_oauth_callback, name='tiktok-callback'),
+    path('instagram/callback/', views.instagram_oauth_callback, name='instagram-callback'),
+    path('youtube/callback/', views.youtube_oauth_callback, name='youtube-callback'),
 ]

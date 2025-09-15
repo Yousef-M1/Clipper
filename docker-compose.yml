@@ -14,6 +14,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DB_HOST=db
       - DB_NAME=devdb
@@ -21,6 +22,14 @@ services:
       - DB_PASSWORD=changeme
       - DEBUG=True
       - DJANGO_LOG_LEVEL=INFO
+      # Social Media API Keys
+      - TIKTOK_CLIENT_ID=${TIKTOK_CLIENT_ID}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+      - INSTAGRAM_CLIENT_ID=${INSTAGRAM_CLIENT_ID}
+      - INSTAGRAM_CLIENT_SECRET=${INSTAGRAM_CLIENT_SECRET}
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       - db
       - redis
@@ -41,6 +50,7 @@ services:
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DB_HOST=db
       - DB_NAME=devdb
@@ -48,11 +58,50 @@ services:
       - DB_PASSWORD=changeme
       - DEBUG=True
       - DJANGO_LOG_LEVEL=INFO
+      # Social Media API Keys
+      - TIKTOK_CLIENT_ID=${TIKTOK_CLIENT_ID}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+      - INSTAGRAM_CLIENT_ID=${INSTAGRAM_CLIENT_ID}
+      - INSTAGRAM_CLIENT_SECRET=${INSTAGRAM_CLIENT_SECRET}
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       - db
       - redis
       - web
     restart: unless-stopped
+
+  # Celery Beat Scheduler (for automated social media posting)
+  beat:
+    build:
+      context: .
+    volumes:
+      - .:/app
+      - media:/app/media
+    command: celery -A app beat --loglevel=info
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/1
+      - DB_HOST=db
+      - DB_NAME=devdb
+      - DB_USER=devuser
+      - DB_PASSWORD=changeme
+      - DEBUG=True
+      # Social Media API Keys
+      - TIKTOK_CLIENT_ID=${TIKTOK_CLIENT_ID}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+      - INSTAGRAM_CLIENT_ID=${INSTAGRAM_CLIENT_ID}
+      - INSTAGRAM_CLIENT_SECRET=${INSTAGRAM_CLIENT_SECRET}
+      - YOUTUBE_CLIENT_ID=${YOUTUBE_CLIENT_ID}
+      - YOUTUBE_CLIENT_SECRET=${YOUTUBE_CLIENT_SECRET}
+    depends_on:
+      - redis
+      - db
+    restart: unless-stopped
+    profiles:
+      - automation  # Start with: docker-compose --profile automation up
 
   # Optional: Celery monitor (useful for debugging)
   flower:

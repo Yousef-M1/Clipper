@@ -158,6 +158,23 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 
+# Celery Beat Schedule (for social media automation)
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'process-scheduled-posts': {
+        'task': 'social_media.tasks.process_scheduled_posts',
+        'schedule': crontab(minute='*/5'),  # Every 5 minutes
+    },
+    'update-analytics-batch': {
+        'task': 'social_media.tasks.update_analytics_batch',
+        'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
+    },
+    'refresh-expiring-tokens': {
+        'task': 'social_media.tasks.refresh_expiring_tokens',
+        'schedule': crontab(hour=1, minute=0),  # Daily at 1 AM
+    },
+}
+
 # ==============================================================================
 # REST FRAMEWORK CONFIGURATION
 # ==============================================================================

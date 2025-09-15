@@ -1,0 +1,7 @@
+{
+  "social_account_id": 1,
+  "video_url": "https://example.com/new-viral-video.mp4",
+  "caption": "Testing live social media publishing! This is amazing!",
+  "hashtags": ["test", "live", "social", "amazing"],
+  "scheduled_time": "2025-09-15T20:00:00Z"
+}

@@ -408,53 +408,53 @@ class YouTubePublisher(BaseSocialPublisher):
         return self._upload_video(video_path, metadata)
 
     def _upload_video(self, video_path: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Upload video file to YouTube"""
+        """Upload video file to YouTube using multipart upload"""
 
         headers = {
             'Authorization': f'Bearer {self.access_token}',
-            'X-Upload-Content-Type': 'video/*',
-            'X-Upload-Content-Length': str(self._get_file_size(video_path)),
-            'Content-Type': 'application/json'
+            'Accept': 'application/json'
         }
 
-        # Step 1: Initiate resumable upload
-        params = {'part': 'snippet,status', 'uploadType': 'resumable'}
+        params = {
+            'part': 'snippet,status',
+            'uploadType': 'multipart'
+        }
 
-        init_response = self._make_request(
-            'POST',
-            self.UPLOAD_URL,
-            headers=headers,
-            params=params,
-            json=metadata
-        )
+        # Read video file and create multipart upload
+        try:
+            with open(video_path, 'rb') as video_file:
+                files = {
+                    'metadata': (None, json.dumps(metadata), 'application/json'),
+                    'media': (video_path, video_file, 'video/mp4')
+                }
 
-        upload_url = init_response.headers['Location']
+                response = requests.post(
+                    self.UPLOAD_URL,
+                    headers=headers,
+                    params=params,
+                    files=files
+                )
 
-        # Step 2: Upload video file
-        return self._upload_video_data(upload_url, video_path)
+                if response.status_code == 200:
+                    result = response.json()
+                    video_id = result.get('id')
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
 
-    def _upload_video_data(self, upload_url: str, video_path: str) -> Dict[str, Any]:
-        """Upload video data to YouTube"""
+                    logger.info(f"YouTube video uploaded successfully: {video_id}")
+                    return {
+                        'success': True,
+                        'video_id': video_id,
+                        'video_url': video_url,
+                        'platform_response': result
+                    }
+                else:
+                    logger.error(f"YouTube upload failed: {response.status_code} - {response.text}")
+                    raise PublishingError(f"Upload failed: {response.text}")
 
-        with open(video_path, 'rb') as video_file:
-            file_size = self._get_file_size(video_path)
+        except Exception as e:
+            logger.error(f"YouTube upload error: {str(e)}")
+            raise PublishingError(f"Upload error: {str(e)}")
 
-            headers = {
-                'Content-Length': str(file_size),
-                'Content-Type': 'video/*'
-            }
-
-            response = requests.put(
-                upload_url,
-                data=video_file,
-                headers=headers,
-                timeout=600  # 10 minutes timeout for large videos
-            )
-
-            if not response.ok:
-                raise PublishingError(f"YouTube upload failed: {response.status_code}")
-
-            return response.json()
 
     def _get_file_size(self, file_path: str) -> int:
         """Get file size in bytes"""
