@@ -9,8 +9,12 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q, Count
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_exempt
 from datetime import datetime, timedelta
 import uuid
+import requests
+import os
 
 from core.throttling import PlanBasedThrottle
 from .models import (
@@ -633,6 +637,49 @@ def youtube_oauth_callback(request):
 
         channel_data = channel_info['items'][0]
 
+        # CRITICAL FIX: Save token to database
+        try:
+            from django.contrib.auth import get_user_model
+            from datetime import datetime, timezone, timedelta
+
+            User = get_user_model()
+            # Get demo user (you may want to implement proper user association)
+            demo_user = User.objects.filter(email='demo@socialmedia.com').first()
+
+            if demo_user:
+                # Update existing YouTube account
+                youtube_platform = SocialPlatform.objects.get(name='youtube')
+                youtube_account, created = SocialAccount.objects.get_or_create(
+                    user=demo_user,
+                    platform=youtube_platform,
+                    defaults={
+                        'platform_user_id': channel_data['id'],
+                        'display_name': channel_data['snippet']['title'],
+                        'username': channel_data['snippet']['title'],
+                        'access_token': token_info['access_token'],
+                        'refresh_token': token_info.get('refresh_token', ''),
+                        'token_expires_at': datetime.now(timezone.utc) + timedelta(hours=1),
+                        'status': 'connected',
+                        'follower_count': int(channel_data['statistics'].get('subscriberCount', 0))
+                    }
+                )
+
+                if not created:
+                    # Update existing account
+                    youtube_account.access_token = token_info['access_token']
+                    youtube_account.refresh_token = token_info.get('refresh_token', '')
+                    youtube_account.token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                    youtube_account.status = 'connected'
+                    youtube_account.follower_count = int(channel_data['statistics'].get('subscriberCount', 0))
+                    youtube_account.save()
+
+                token_saved = "✅ Token saved to database!"
+            else:
+                token_saved = "⚠️ Demo user not found - token not saved"
+
+        except Exception as save_error:
+            token_saved = f"❌ Error saving token: {save_error}"
+
         # Success response with channel info
         return HttpResponse(f"""
         <h1>🎉 YouTube OAuth Success!</h1>
@@ -641,6 +688,7 @@ def youtube_oauth_callback(request):
         <p><strong>Access Token:</strong> {token_info['access_token'][:50]}...</p>
         <p><strong>Refresh Token:</strong> {token_info.get('refresh_token', 'N/A')}</p>
         <p><strong>State:</strong> {state}</p>
+        <p><strong>Database:</strong> {token_saved}</p>
         <hr>
         <p>✅ YouTube connection successful! You can now close this window.</p>
         <p>Save this info for your social account connection:</p>

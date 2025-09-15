@@ -922,3 +922,99 @@ def get_scene_detection_capabilities(request):
         'max_duration_minutes': 180,  # 3 hours
         'message': 'Enhanced scene detection powered by computer vision'
     })
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+@throttle_classes([PlanBasedThrottle])
+def enable_social_media_posting(request, video_request_id):
+    """Enable social media auto-posting for a video request"""
+    try:
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+    except VideoRequest.DoesNotExist:
+        return Response({'error': 'Video request not found'}, status=404)
+
+    # Get social media settings from request
+    social_accounts_ids = request.data.get('social_accounts', [])
+    caption_template = request.data.get('caption_template', '')
+    hashtags = request.data.get('hashtags', [])
+    schedule_posts = request.data.get('schedule_posts', False)
+    schedule_interval = request.data.get('schedule_interval', 60)
+
+    # Validate social accounts belong to user
+    from social_media.models import SocialAccount
+    social_accounts = SocialAccount.objects.filter(
+        id__in=social_accounts_ids,
+        user=request.user,
+        status='connected'
+    )
+
+    if not social_accounts.exists():
+        return Response({'error': 'No valid social accounts provided'}, status=400)
+
+    # Update video request with social media settings
+    video_request.auto_post_to_social = True
+    video_request.post_caption_template = caption_template
+    video_request.post_hashtags = hashtags
+    video_request.schedule_posts = schedule_posts
+    video_request.post_schedule_interval = schedule_interval
+    video_request.save()
+
+    # Set social accounts
+    video_request.social_accounts.set(social_accounts)
+
+    # If video is already done, trigger social posting immediately
+    if video_request.status == 'done':
+        from core.social_integration import trigger_social_posting_for_video_request
+        result = trigger_social_posting_for_video_request(video_request_id)
+
+        return Response({
+            'success': True,
+            'message': 'Social media posting enabled and triggered',
+            'social_result': result,
+            'social_accounts': list(social_accounts.values('id', 'platform__name', 'username')),
+            'settings': {
+                'caption_template': caption_template,
+                'hashtags': hashtags,
+                'schedule_posts': schedule_posts,
+                'schedule_interval': schedule_interval
+            }
+        })
+
+    return Response({
+        'success': True,
+        'message': 'Social media posting enabled for when processing completes',
+        'social_accounts': list(social_accounts.values('id', 'platform__name', 'username')),
+        'settings': {
+            'caption_template': caption_template,
+            'hashtags': hashtags,
+            'schedule_posts': schedule_posts,
+            'schedule_interval': schedule_interval
+        }
+    })
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def get_social_posting_status(request, video_request_id):
+    """Get social media posting status for a video request"""
+    try:
+        video_request = VideoRequest.objects.get(
+            id=video_request_id,
+            user=request.user
+        )
+    except VideoRequest.DoesNotExist:
+        return Response({'error': 'Video request not found'}, status=404)
+
+    from core.social_integration import SocialMediaIntegrationService
+    integration_service = SocialMediaIntegrationService(video_request)
+    status_info = integration_service.get_posting_status()
+
+    return Response({
+        'video_request_id': video_request_id,
+        'video_status': video_request.status,
+        'social_posting_status': status_info
+    })

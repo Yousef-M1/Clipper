@@ -179,6 +179,28 @@ class VideoRequest(models.Model):
     processing_settings = models.JSONField(default=dict, blank=True)  # Store all processing settings
     estimated_processing_time = models.FloatField(null=True, blank=True)  # In minutes
 
+    # SOCIAL MEDIA AUTO-POSTING FIELDS
+    auto_post_to_social = models.BooleanField(default=False, help_text="Automatically post clips to social media")
+    social_accounts = models.ManyToManyField(
+        'social_media.SocialAccount',
+        blank=True,
+        help_text="Social media accounts to post clips to"
+    )
+    post_caption_template = models.TextField(
+        blank=True,
+        help_text="Template for social media captions. Use {title}, {duration}, etc."
+    )
+    post_hashtags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Default hashtags for social media posts"
+    )
+    schedule_posts = models.BooleanField(default=False, help_text="Schedule posts instead of immediate publishing")
+    post_schedule_interval = models.IntegerField(
+        default=60,
+        help_text="Minutes between scheduled posts when posting multiple clips"
+    )
+
     def __str__(self):
         return f"{self.url} ({self.user.email})"
 
@@ -213,6 +235,20 @@ class Clip(models.Model):
     # Caption styling information
     used_caption_style = models.CharField(max_length=20, default='modern_purple')
     has_word_highlighting = models.BooleanField(default=False)
+
+    # SOCIAL MEDIA POSTING TRACKING
+    social_posts_created = models.BooleanField(default=False, help_text="Whether social media posts were created for this clip")
+    social_post_ids = models.JSONField(default=list, blank=True, help_text="IDs of scheduled social media posts")
+    auto_post_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('not_scheduled', 'Not Scheduled'),
+            ('scheduled', 'Scheduled'),
+            ('posted', 'Posted'),
+            ('failed', 'Failed')
+        ],
+        default='not_scheduled'
+    )
 
     class Meta:
         ordering = ['start_time']

@@ -43,4 +43,8 @@ urlpatterns = [
     path('analysis/enhanced-moments/', views.detect_enhanced_moments, name='enhanced-moments'),
     path('analysis/scene-transitions/', views.detect_scene_transitions, name='scene-transitions'),
     path('analysis/capabilities/', views.get_scene_detection_capabilities, name='scene-capabilities'),
+
+    # Social Media Integration endpoints
+    path('video-requests/<int:video_request_id>/social-posting/enable/', views.enable_social_media_posting, name='enable-social-posting'),
+    path('video-requests/<int:video_request_id>/social-posting/status/', views.get_social_posting_status, name='social-posting-status'),
 ]

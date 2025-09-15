@@ -260,6 +260,29 @@ def process_video_request(self, video_request_id, processing_settings=None):
         if clips_created > 0:
             video_request.status = "done"
             logger.info(f"✓ Enhanced processing completed for {video_request_id}. Created {clips_created}/{total_moments} clips")
+
+            # SOCIAL MEDIA AUTO-POSTING INTEGRATION
+            try:
+                from core.social_integration import trigger_social_posting_for_video_request
+
+                if video_request.auto_post_to_social:
+                    logger.info(f"🚀 Starting social media auto-posting for video request {video_request_id}")
+                    social_result = trigger_social_posting_for_video_request(video_request_id)
+
+                    if social_result.get('success'):
+                        logger.info(
+                            f"✓ Social media posting completed: "
+                            f"{social_result.get('clips_processed')} clips processed, "
+                            f"{social_result.get('total_posts_created')} posts created ({social_result.get('schedule_type')})"
+                        )
+                    else:
+                        logger.warning(f"⚠️ Social media posting failed: {social_result.get('reason')}")
+                else:
+                    logger.info("📱 Social media auto-posting disabled for this video request")
+
+            except Exception as social_error:
+                logger.error(f"❌ Error in social media integration: {social_error}")
+                # Don't fail the entire job if social posting fails
         else:
             video_request.status = "failed"
             logger.error(f"✗ Failed to create any clips for video request {video_request_id}")
