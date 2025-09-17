@@ -47,6 +47,13 @@ services:
       - media:/app/media  # Same media volume as web service
       - /tmp:/tmp  # Shared temp directory for video processing
     command: celery -A app worker --loglevel=info --concurrency=2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
@@ -84,6 +91,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - REDIS_URL=redis://redis:6379/1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - DB_HOST=db
       - DB_NAME=devdb
       - DB_USER=devuser

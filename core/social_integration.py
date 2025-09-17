@@ -136,7 +136,7 @@ class SocialMediaIntegrationService:
                     scheduled_time=schedule_time,
                     status='scheduled' if self.video_request.schedule_posts else 'pending',
                     priority=2,
-                    metadata={
+                    platform_response={
                         'source': 'video_processing',
                         'video_request_id': self.video_request.id,
                         'clip_id': clip.id,

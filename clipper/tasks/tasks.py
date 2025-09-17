@@ -10,12 +10,15 @@ import logging
 # Import the new modules we created
 from ..ai_moments import detect_ai_moments
 from ..caption_styles import CaptionStyleManager, create_styled_subtitles
+from ..advanced_captions import AdvancedCaptionStyleManager, create_advanced_subtitles
+from ..simple_captions import create_simple_visible_subtitles
 from ..video_quality import VideoQualityManager, create_quality_controlled_clip
 
 logger = logging.getLogger(__name__)
 
-def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_word_highlighting=True):
-    """Enhanced SRT creation with styling and word highlighting using real Whisper word timestamps."""
+def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_word_highlighting=True,
+                           advanced_mode=False, max_words_per_screen=2, output_format='horizontal'):
+    """Enhanced SRT creation with advanced styling and organized word display."""
     # Clamp negative times and filter out invalid segments
     valid_segments = []
     for seg in segments:
@@ -37,14 +40,18 @@ def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_wo
         return None
 
     try:
-        style_manager = CaptionStyleManager(style)
-
-        # TEMPORARY: Use simple SRT to test if subtitles work at all
-        logger.info(f"Using simple SRT for testing subtitle rendering")
-        write_srt(valid_segments, srt_path)
+        # ALWAYS use simple, reliable captions for now to fix visibility issues
+        logger.info(f"Creating simple, visible subtitles with max words: {max_words_per_screen}")
+        return create_simple_visible_subtitles(
+            valid_segments,
+            srt_path,
+            max_words=max_words_per_screen,
+            style=style,
+            output_format=output_format
+        )
 
     except Exception as e:
-        logger.warning(f"Word-level highlighting failed ({e}), falling back to simple subtitles")
+        logger.error(f"Simple subtitles failed ({e}), using basic fallback")
         # Fallback to basic SRT
         write_srt(valid_segments, srt_path)
 
@@ -64,12 +71,12 @@ def detect_moments_enhanced(video_path: str, transcript, settings: dict):
             return detect_ai_moments(video_path, transcript, clip_duration, max_clips)
         except Exception as e:
             logger.warning(f"AI moment detection failed, falling back to fixed intervals: {e}")
-            return detect_moments_fixed(video_path, clip_duration)
+            return detect_moments_fixed(video_path, clip_duration, max_clips)
     else:
         logger.info("Using fixed interval moment detection")
-        return detect_moments_fixed(video_path, clip_duration)
+        return detect_moments_fixed(video_path, clip_duration, max_clips)
 
-def detect_moments_fixed(video_path: str, clip_duration: float = 30.0):
+def detect_moments_fixed(video_path: str, clip_duration: float = 30.0, max_clips: int = 10):
     """Original fixed-interval moments detection."""
     from moviepy.editor import VideoFileClip
     try:
@@ -82,21 +89,25 @@ def detect_moments_fixed(video_path: str, clip_duration: float = 30.0):
 
     moments = []
     start = 0.0
-    while start < total_duration:
+    while start < total_duration and len(moments) < max_clips:
         end = min(start + clip_duration, total_duration)
         if end - start >= 5.0:
             moments.append({"start": start, "end": end})
         start = end
 
-    logger.info(f"Detected {len(moments)} fixed moments")
+    logger.info(f"Detected {len(moments)} fixed moments (limited to {max_clips})")
     return moments
 
 @shared_task(bind=True, max_retries=3)
 def process_video_request(self, video_request_id, processing_settings=None):
     """Enhanced video processing with AI moments, styled captions, and quality control."""
 
-    # Default processing settings
-    if processing_settings is None:
+    video_request = VideoRequest.objects.get(id=video_request_id)
+
+    # Get processing settings from video request, or use defaults
+    if processing_settings is None and video_request.processing_settings:
+        processing_settings = video_request.processing_settings
+    elif processing_settings is None:
         processing_settings = {
             'moment_detection_type': 'ai_powered',  # 'ai_powered' or 'fixed_intervals'
             'clip_duration': 30.0,
@@ -111,8 +122,6 @@ def process_video_request(self, video_request_id, processing_settings=None):
             'custom_width': None,
             'custom_height': None,
         }
-
-    video_request = VideoRequest.objects.get(id=video_request_id)
     video_request.status = "processing"
     video_request.save()
 
@@ -166,7 +175,10 @@ def process_video_request(self, video_request_id, processing_settings=None):
             try:
                 # Filter segments for this clip
                 clip_segments = []
+                logger.info(f"DEBUG: Filtering transcript for clip {moment['start']:.1f}-{moment['end']:.1f}s")
+
                 for seg in transcript:
+                    logger.info(f"  Checking segment {seg['start']:.1f}-{seg['end']:.1f}s: '{seg['text'][:50]}...'")
                     if seg["start"] < moment["end"] and seg["end"] > moment["start"]:
                         adjusted_start = max(0, seg["start"] - moment["start"])
                         adjusted_end = min(moment["end"] - moment["start"], seg["end"] - moment["start"])
@@ -177,9 +189,22 @@ def process_video_request(self, video_request_id, processing_settings=None):
                                 "end": adjusted_end,
                                 "text": seg["text"]
                             }
-                            # CRITICAL: Copy word-level data if available for word highlighting
+                            # CRITICAL: Copy and adjust word-level timestamps for clip timing
                             if "words" in seg:
-                                clip_segment["words"] = seg["words"]
+                                adjusted_words = []
+                                for word in seg["words"]:
+                                    # Adjust word timestamps relative to clip start
+                                    word_start = max(0, word["start"] - moment["start"])
+                                    word_end = max(0, word["end"] - moment["start"])
+
+                                    # Only include words that fall within the clip duration
+                                    if word_start < (moment["end"] - moment["start"]):
+                                        adjusted_words.append({
+                                            "start": word_start,
+                                            "end": word_end,
+                                            "word": word["word"]
+                                        })
+                                clip_segment["words"] = adjusted_words
                             clip_segments.append(clip_segment)
 
                 logger.info(f"Found {len(clip_segments)} subtitle segments for clip {idx + 1}")
@@ -191,7 +216,10 @@ def process_video_request(self, video_request_id, processing_settings=None):
                         clip_segments,
                         srt_path,
                         style=processing_settings['caption_style'],
-                        enable_word_highlighting=processing_settings['enable_word_highlighting']
+                        enable_word_highlighting=processing_settings['enable_word_highlighting'],
+                        advanced_mode=processing_settings.get('advanced_captions', True),
+                        max_words_per_screen=processing_settings.get('max_words_per_screen', 2),
+                        output_format=processing_settings.get('output_format', 'horizontal')
                     )
                     if srt_file_path:
                         logger.info(f"Created styled SRT file: {srt_file_path}")
@@ -232,10 +260,15 @@ def process_video_request(self, video_request_id, processing_settings=None):
                         end_time=moment["end"],
                         duration=duration,
                         status="done",
-                        # Add metadata fields if available in your model
-                        # quality_preset=processing_settings['video_quality'],
-                        # caption_style=processing_settings['caption_style'],
-                        # file_size_mb=estimated_size_mb
+                        video_quality=processing_settings['video_quality'],
+                        compression_level=processing_settings['compression_level'],
+                        used_caption_style=processing_settings['caption_style'],
+                        has_word_highlighting=processing_settings['enable_word_highlighting'],
+                        caption_style=processing_settings,
+                        file_size_mb=estimated_size_mb,
+                        detection_method="fixed_interval" if processing_settings['moment_detection_type'] == 'fixed_intervals' else "ai_powered",
+                        engagement_score=5.0,
+                        format="mp4"
                     )
                     clip_instance.file_path.save(clip_filename, ContentFile(f.read()))
 

@@ -161,6 +161,24 @@ CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 # Celery Beat Schedule (for social media automation)
 from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
+    # Queue processing tasks
+    'process-video-queue': {
+        'task': 'core.tasks.process_next_in_queue',
+        'schedule': 30.0,  # Every 30 seconds
+    },
+    'process-notifications': {
+        'task': 'core.tasks.process_notification_queue',
+        'schedule': 60.0,  # Every minute
+    },
+    'update-queue-stats': {
+        'task': 'core.tasks.update_queue_stats',
+        'schedule': 300.0,  # Every 5 minutes
+    },
+    'cleanup-old-entries': {
+        'task': 'core.tasks.cleanup_old_queue_entries',
+        'schedule': crontab(hour=2, minute=30),  # Daily at 2:30 AM
+    },
+    # Social media tasks
     'process-scheduled-posts': {
         'task': 'social_media.tasks.process_scheduled_posts',
         'schedule': crontab(minute='*/5'),  # Every 5 minutes

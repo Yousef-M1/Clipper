@@ -9,6 +9,7 @@ from clipper.serializers import VideoRequestSerializer, CaptionSettingsSerialize
 from .tasks.tasks import process_video_request, process_video_with_custom_settings
 from .video_quality import get_available_quality_presets, get_available_compression_levels
 from .caption_styles import get_available_caption_styles
+from .advanced_captions import get_available_advanced_styles
 from .video_formats import get_available_video_formats, get_available_platforms
 import os
 import mimetypes
@@ -35,8 +36,10 @@ class VideoRequestCreateView(generics.CreateAPIView):
             'max_clips': 10,
             'video_quality': '720p',
             'compression_level': 'balanced',
-            'caption_style': 'modern_purple',
+            'caption_style': 'elevate_style',  # Use new advanced style
             'enable_word_highlighting': True,
+            'advanced_captions': True,  # Enable new advanced caption system
+            'max_words_per_screen': 2,  # Organized word display
             'enable_scene_detection': True,  # NEW: Enable visual scene detection
             'enable_composition_analysis': True,  # NEW: Enable composition scoring
         }
@@ -113,11 +116,14 @@ class EnhancedVideoRequestCreateView(generics.CreateAPIView):
         if validated['compression_level'] not in compression_levels:
             validated['compression_level'] = 'balanced'
 
-        # Caption style
+        # Caption style (check both regular and advanced styles)
         caption_styles = get_available_caption_styles()
-        validated['caption_style'] = settings.get('caption_style', 'modern_purple')
-        if validated['caption_style'] not in caption_styles:
-            validated['caption_style'] = 'modern_purple'
+        advanced_styles = get_available_advanced_styles()
+        all_styles = {**caption_styles, **advanced_styles}
+
+        validated['caption_style'] = settings.get('caption_style', 'elevate_style')
+        if validated['caption_style'] not in all_styles:
+            validated['caption_style'] = 'elevate_style'
 
         # Word highlighting
         validated['enable_word_highlighting'] = bool(settings.get('enable_word_highlighting', True))
@@ -207,11 +213,20 @@ def get_compression_levels(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def get_caption_styles(request):
-    """Get available caption styles"""
-    styles = get_available_caption_styles()
+    """Get available caption styles (both regular and advanced)"""
+    regular_styles = get_available_caption_styles()
+    advanced_styles = get_available_advanced_styles()
+
     return Response({
-        'styles': styles,
-        'default': 'modern_purple'
+        'regular_styles': regular_styles,
+        'advanced_styles': advanced_styles,
+        'all_styles': {**regular_styles, **advanced_styles},
+        'default': 'elevate_style',
+        'features': {
+            'advanced_captions': True,
+            'max_words_options': [1, 2, 3, 4, 5],
+            'special_effects': ['text_reveal', 'slide_in', 'word_pop', 'impactful_highlight']
+        }
     })
 
 @api_view(['GET'])
@@ -251,7 +266,7 @@ def get_processing_options(request):
         },
         'quality_presets': get_available_quality_presets(),
         'compression_levels': get_available_compression_levels(),
-        'caption_styles': get_available_caption_styles(),
+        'caption_styles': {**get_available_caption_styles(), **get_available_advanced_styles()},
         'video_formats': get_available_video_formats(),
         'platform_presets': get_available_platforms(),
         'defaults': {
@@ -260,7 +275,9 @@ def get_processing_options(request):
             'max_clips': 10,
             'video_quality': '720p',
             'compression_level': 'balanced',
-            'caption_style': 'modern_purple',
+            'caption_style': 'elevate_style',
+            'advanced_captions': True,
+            'max_words_per_screen': 2,
             'enable_word_highlighting': True,
             'output_format': 'horizontal',
             'social_platform': 'youtube'

@@ -721,7 +721,7 @@ def tiktok_oauth_callback(request):
 
 
 @api_view(['GET'])
-@permission_classes([])  # No authentication required for OAuth callbacks
+@permission_classes([])
 @csrf_exempt
 def instagram_oauth_callback(request):
     """Handle Instagram OAuth callback - placeholder for when developer access granted"""

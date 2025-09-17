@@ -15,6 +15,7 @@ class CaptionStyleManager:
             'name': 'Modern Purple',
             'font': 'Arial-Bold',
             'font_size': 24,
+            'font_size_vertical': 18,  # Smaller for vertical videos
             'primary_color': 'white',
             'highlight_color': '#8B5CF6',  # Purple
             'outline_color': 'black',
@@ -73,9 +74,10 @@ class CaptionStyleManager:
         }
     }
 
-    def __init__(self, style_name: str = 'modern_purple'):
+    def __init__(self, style_name: str = 'modern_purple', output_format: str = 'horizontal'):
         self.style = self.CAPTION_STYLES.get(style_name, self.CAPTION_STYLES['modern_purple'])
         self.style_name = style_name
+        self.output_format = output_format
 
     def create_word_level_ass(self, segments: List[Dict], output_path: str) -> str:
         """
@@ -96,8 +98,13 @@ class CaptionStyleManager:
 
                 # Define style based on caption style (with proper color support)
                 if self.style_name == 'modern_purple':
+                    # Get font size based on format - use smaller font for vertical videos
+                    if self.output_format == 'vertical':
+                        font_size = self.style.get('font_size_vertical', 18)
+                    else:
+                        font_size = self.style['font_size']
                     # Style: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-                    f.write("Style: Default,Arial,24,&HFFFFFF,&HFFFFFF,&H000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,20,1\n\n")
+                    f.write(f"Style: Default,Arial,{font_size},&HFFFFFF,&HFFFFFF,&H000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,20,1\n\n")
                 elif self.style_name == 'tiktok_style':
                     f.write("Style: Default,Arial,28,&HFFFFFF,&HFFFFFF,&H000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,2,30,30,20,1\n\n")
                 else:
@@ -370,13 +377,13 @@ class CaptionStyleManager:
                 # Highlight current word with ASS color tags (BGR format)
                 if self.style_name == 'modern_purple':
                     # Purple #8B5CF6 = RGB(139,92,246) = BGR(246,92,139) = &HF65C8B&
-                    # Make it more visible with bright purple: &HFF00FF& (magenta)
-                    highlighted_word = f'{{\\c&HFF00FF&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
+                    # Use proper purple color in BGR format
+                    highlighted_word = f'{{\\c&HF65C8B&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
                 elif self.style_name == 'youtube_style':
                     # Gold #FFD700 = RGB(255,215,0) = BGR(0,215,255) = &H00D7FF&
                     highlighted_word = f'{{\\c&H00D7FF&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
                 else:
-                    highlighted_word = f'{{\\c&HFF00FF&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
+                    highlighted_word = f'{{\\c&HF65C8B&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
                 result_words.append(highlighted_word)
             else:
                 # Non-highlighted words stay white
@@ -461,12 +468,12 @@ class CaptionStyleManager:
         except:
             return None
 
-def create_styled_subtitles(segments: List[Dict], output_path: str, style_name: str = 'modern_purple') -> str:
+def create_styled_subtitles(segments: List[Dict], output_path: str, style_name: str = 'modern_purple', output_format: str = 'horizontal') -> str:
     """
     Create stylized subtitles with word-by-word highlighting
     """
-    style_manager = CaptionStyleManager(style_name)
-    return style_manager.create_word_level_srt(segments, output_path)
+    style_manager = CaptionStyleManager(style_name, output_format)
+    return style_manager.create_word_level_ass(segments, output_path)
 
 def get_available_caption_styles() -> Dict[str, Dict]:
     """

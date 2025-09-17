@@ -18,12 +18,21 @@ def download_video(url: str) -> str:
     temp_dir = tempfile.gettempdir()
     output_path = os.path.join(temp_dir, "%(id)s.%(ext)s")
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',  # Prefer mp4, fallback to best quality
+        'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',  # Prefer good quality mp4
         'outtmpl': output_path,
         'noplaylist': True,
         'extractaudio': False,  # Keep video with audio
         'writesubtitles': False,
-        'writeautomaticsub': False
+        'writeautomaticsub': False,
+        # Audio quality settings for better transcription
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
+        'postprocessor_args': [
+            '-ar', '16000',  # 16kHz sample rate (Whisper optimal)
+            '-ac', '1',      # Mono audio (reduces noise)
+        ]
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -51,8 +60,26 @@ def transcribe_with_whisper(video_path: str):
     try:
         # Use local Whisper for word-level timestamps (OpenAI API doesn't support this)
         logger.info("Loading Whisper model for word-level timestamps...")
-        model = whisper.load_model("base")
-        result = model.transcribe(video_path, word_timestamps=True)
+
+        # Use tiny model for MUCH faster processing (tiny is 10x faster than base)
+        model = whisper.load_model("tiny")
+
+        # Improved transcription settings for precise word-level timing
+        logger.info("Starting Whisper transcription...")
+        result = model.transcribe(
+            video_path,
+            word_timestamps=True,
+            language="en",  # Force English for consistency
+            temperature=0,  # Deterministic output
+            compression_ratio_threshold=2.4,  # Filter out low-quality segments
+            logprob_threshold=-1.0,  # Filter out uncertain words
+            no_speech_threshold=0.6,  # Better silence detection
+            initial_prompt="This is a clear English speech video with precise timing.",  # Prime the model
+            verbose=False,  # Reduce output
+            fp16=False,  # Use fp32 for better compatibility
+            prepend_punctuations="\"'([{-",
+            append_punctuations="\"'.,:!?)]}",  # Better punctuation handling
+        )
 
         segments = []
         word_level_count = 0
@@ -68,13 +95,33 @@ def transcribe_with_whisper(video_path: str):
                 logger.info(f"Found {len(segment['words'])} words in segment")
                 logger.info(f"First few words: {[w.get('word', 'NO_WORD') for w in segment['words'][:3]]}")
 
-                # Add segment with word-level timing
-                segments.append({
-                    "start": segment.get("start", 0.0),
-                    "end": segment.get("end", 30.0),
-                    "text": segment.get("text", "").strip(),
-                    "words": segment["words"]  # Word-level timestamps
-                })
+                # Break large segments into smaller ones for better subtitle timing
+                words = segment["words"]
+                if len(words) > 8:  # If segment has more than 8 words, break it down
+                    # Create smaller sub-segments (4-8 words each)
+                    words_per_subsegment = 6
+                    for i in range(0, len(words), words_per_subsegment):
+                        sub_words = words[i:i + words_per_subsegment]
+                        if sub_words:
+                            sub_start = sub_words[0].get("start", segment.get("start", 0.0))
+                            sub_end = sub_words[-1].get("end", segment.get("end", 30.0))
+                            sub_text = " ".join([w.get("word", "") for w in sub_words]).strip()
+
+                            segments.append({
+                                "start": sub_start,
+                                "end": sub_end,
+                                "text": sub_text,
+                                "words": sub_words
+                            })
+                            logger.info(f"  Created sub-segment: {sub_start:.1f}-{sub_end:.1f}s -> '{sub_text[:30]}...'")
+                else:
+                    # Keep smaller segments as-is
+                    segments.append({
+                        "start": segment.get("start", 0.0),
+                        "end": segment.get("end", 30.0),
+                        "text": segment.get("text", "").strip(),
+                        "words": segment["words"]
+                    })
             else:
                 logger.warning(f"No word-level data for segment: {segment.get('text', '')[:50]}")
                 # Fallback to segment-level only
@@ -89,12 +136,10 @@ def transcribe_with_whisper(video_path: str):
 
     except Exception as e:
         logger.error(f"Whisper transcription failed: {e}")
-        # Ultimate fallback
-        return [{
-            "start": 0.0,
-            "end": 30.0,
-            "text": "Transcription failed"
-        }]
+        # Return empty segments instead of fallback text
+        # This will let the video processing continue without burned-in error text
+        logger.info("Returning empty segments - video will be processed without subtitles")
+        return []
 
 def write_srt(segments, srt_path: str):
     """Write segments to an SRT subtitle file."""
