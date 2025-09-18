@@ -40,13 +40,31 @@ def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_wo
         return None
 
     try:
-        # Use per-word highlighting for modern_purple with word highlighting enabled
-        if enable_word_highlighting and style == 'modern_purple':
-            logger.info(f"Creating per-word SRT subtitles with purple highlighting")
+        # Check if this is an advanced style that should use the advanced caption system
+        advanced_styles = ['elevate_style', 'slide_in_modern', 'word_pop', 'two_word_flow', 'impactful_highlight']
+
+        if advanced_mode and style in advanced_styles:
+            logger.info(f"Creating advanced subtitles with {style}")
+            return create_advanced_subtitles(
+                valid_segments,
+                srt_path,
+                style_name=style,
+                max_words=max_words_per_screen,
+                enable_effects=True
+            )
+        # Use per-word highlighting for styles with word highlighting enabled
+        elif enable_word_highlighting and style in ['modern_purple', 'tiktok_style']:
+            if style == 'modern_purple':
+                logger.info(f"Creating per-word SRT subtitles with purple highlighting")
+                active_color = "#8B5CF6"  # purple
+            elif style == 'tiktok_style':
+                logger.info(f"Creating per-word SRT subtitles with red/pink highlighting")
+                active_color = "#FF6B6B"  # red/pink for TikTok
+
             return write_per_word_full_line_srt(
                 valid_segments,
                 srt_path,
-                active_color="#8B5CF6",   # purple (consistent with other files)
+                active_color=active_color,
                 inactive_color="#FFFFFF"  # white
             )
         else:
@@ -257,6 +275,37 @@ def process_video_request(self, video_request_id, processing_settings=None):
                 # Check audio in created clip
                 if not check_audio(output_path):
                     logger.warning(f"Created clip has no audio: {output_path}")
+
+                # BACKGROUND MUSIC MIXING
+                if video_request.background_music:
+                    try:
+                        from ..audio_mixing import AudioMixer
+
+                        logger.info(f"Adding background music: {video_request.background_music.name}")
+
+                        # Create temporary output path for mixed audio
+                        mixed_output_path = output_path.replace('.mp4', '_mixed.mp4')
+
+                        mixer = AudioMixer()
+                        mixer.mix_background_music(
+                            video_path=output_path,
+                            output_path=mixed_output_path,
+                            background_music=video_request.background_music,
+                            music_volume=video_request.music_volume,
+                            original_volume=video_request.original_audio_volume,
+                            enable_ducking=video_request.enable_audio_ducking,
+                            fade_in=video_request.music_fade_in,
+                            fade_out=video_request.music_fade_out
+                        )
+
+                        # Replace original clip with mixed version
+                        if os.path.exists(mixed_output_path):
+                            os.replace(mixed_output_path, output_path)
+                            logger.info(f"Successfully mixed background music into clip")
+
+                    except Exception as music_error:
+                        logger.error(f"Background music mixing failed: {music_error}")
+                        # Continue processing without background music
 
                 # Estimate file size
                 duration = moment["end"] - moment["start"]

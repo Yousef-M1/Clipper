@@ -59,6 +59,43 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
+class BackgroundMusic(models.Model):
+    """
+    Model to store background music files (both user-uploaded and preset tracks)
+    """
+    MUSIC_CATEGORIES = [
+        ('upbeat', 'Upbeat/Energetic'),
+        ('chill', 'Chill/Relaxing'),
+        ('corporate', 'Corporate/Professional'),
+        ('gaming', 'Gaming/Electronic'),
+        ('cinematic', 'Cinematic/Epic'),
+        ('acoustic', 'Acoustic/Folk'),
+        ('hip_hop', 'Hip Hop/Rap'),
+        ('custom', 'User Upload'),
+    ]
+
+    name = models.CharField(max_length=200)
+    file = models.FileField(upload_to='background_music/')
+    category = models.CharField(max_length=20, choices=MUSIC_CATEGORIES)
+    duration_seconds = models.FloatField(help_text="Duration in seconds")
+    is_preset = models.BooleanField(default=False, help_text="Is this a preset track or user upload?")
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Audio properties
+    bpm = models.IntegerField(null=True, blank=True, help_text="Beats per minute")
+    volume_level = models.FloatField(default=0.3, help_text="Default volume level (0.0-1.0)")
+
+    # Metadata
+    artist = models.CharField(max_length=200, blank=True)
+    license_info = models.TextField(blank=True, help_text="Copyright/license information")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.category})"
+
 class Plan(models.Model):
     PLAN_CHOICES = [
         ('free', 'Free'),
@@ -199,6 +236,35 @@ class VideoRequest(models.Model):
     post_schedule_interval = models.IntegerField(
         default=60,
         help_text="Minutes between scheduled posts when posting multiple clips"
+    )
+
+    # BACKGROUND MUSIC FIELDS
+    background_music = models.ForeignKey(
+        BackgroundMusic,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Selected background music track"
+    )
+    music_volume = models.FloatField(
+        default=0.3,
+        help_text="Background music volume (0.0-1.0)"
+    )
+    original_audio_volume = models.FloatField(
+        default=1.0,
+        help_text="Original video audio volume (0.0-1.0)"
+    )
+    enable_audio_ducking = models.BooleanField(
+        default=True,
+        help_text="Lower background music volume when speaker is talking"
+    )
+    music_fade_in = models.FloatField(
+        default=2.0,
+        help_text="Fade in duration for background music (seconds)"
+    )
+    music_fade_out = models.FloatField(
+        default=2.0,
+        help_text="Fade out duration for background music (seconds)"
     )
 
     def __str__(self):

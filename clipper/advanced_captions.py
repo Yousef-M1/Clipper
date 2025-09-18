@@ -23,7 +23,7 @@ class AdvancedCaptionStyleManager:
         'elevate_style': {
             'name': 'Elevate Style',
             'font': 'Arial-Bold',
-            'font_size': 32,
+            'font_size': 20,
             'primary_color': 'white',
             'highlight_color': '#00FF88',  # Bright green
             'background_color': 'rgba(0,0,0,0.8)',
@@ -71,7 +71,7 @@ class AdvancedCaptionStyleManager:
         'impactful_highlight': {
             'name': 'Impactful Highlight',
             'font': 'Arial-Black',
-            'font_size': 34,
+            'font_size': 24,
             'primary_color': 'white',
             'highlight_color': '#FFD700',  # Gold
             'background_color': 'smart_blur',  # Blurs background
@@ -141,10 +141,11 @@ class AdvancedCaptionStyleManager:
                         enable_special_effects
                     )
 
-                    # Add animation effects
-                    effect = self._get_animation_effect(segment)
+                    # For now, disable animations to ensure subtitles work
+                    # Just use the styled text without animations
+                    final_text = styled_text
 
-                    f.write(f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,{effect},{styled_text}\n")
+                    f.write(f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{final_text}\n")
 
             logger.info(f"Created advanced ASS subtitle file: {ass_output_path}")
             return ass_output_path
@@ -191,17 +192,18 @@ class AdvancedCaptionStyleManager:
                     group_end = group[-1]["end"]
                     group_text = " ".join([w["word"].strip() for w in group])
 
-                    # Ensure minimum display time and prevent overlaps
-                    min_display_time = 1.2  # Increased for better readability
+                    # PRESERVE NATURAL TIMING from Whisper - don't force artificial durations
+                    # Only apply minimal timing adjustments if absolutely necessary
+                    min_display_time = 0.5  # Much shorter minimum
                     if group_end - group_start < min_display_time:
                         group_end = group_start + min_display_time
 
-                    # Add gap between subtitle groups to prevent overlap
+                    # Only prevent overlaps if they actually occur, don't add artificial gaps
                     if organized:
                         last_end = organized[-1]["end"]
-                        if group_start < last_end + 0.3:  # 0.3 second gap
-                            group_start = last_end + 0.3
-                            group_end = group_start + min_display_time
+                        if group_start < last_end:  # Only adjust if actual overlap
+                            group_start = last_end + 0.1  # Minimal gap
+                            # Don't extend group_end artificially - keep natural timing
 
                     # Check for impactful words
                     is_impactful = any(word["word"].lower().strip() in self.IMPACT_WORDS for word in group)
@@ -240,27 +242,29 @@ class AdvancedCaptionStyleManager:
     def _apply_elevate_style(self, text: str, is_impactful: bool) -> str:
         """Elevate style with text reveal and glow effect"""
         if is_impactful:
-            # Bright green with strong black outline for visibility
-            return f'{{\\c&H00FF88&\\bord4\\shad2}}{text}'
+            # Extra bright green with stronger effects for impactful words
+            return f'{{\\c&H00FF88&\\bord4\\shad3\\blur2}}{text}'
         else:
-            # Clean white text with strong black outline
-            return f'{{\\c&HFFFFFF&\\bord3\\shad2}}{text}'
+            # Bright green for ALL words in elevate style, with glow effect
+            return f'{{\\c&H00FF88&\\bord3\\shad2\\blur1}}{text}'
 
     def _apply_slide_in_style(self, text: str, is_impactful: bool) -> str:
         """Slide in modern with circle highlight"""
         if is_impactful:
-            # Orange circle background effect
-            return f'{{\\c&HFFFFFF&\\4c&HFF6B35&\\4a&H00&\\bord4}}{text}'
+            # Extra bright orange with stronger effects for impactful words
+            return f'{{\\c&H356BFF&\\4c&HFF6B35&\\4a&H00&\\bord4\\blur2}}{text}'
         else:
-            return f'{{\\c&HFFFFFF&\\bord2}}{text}'
+            # Orange highlighting for ALL words in slide_in_modern style
+            return f'{{\\c&H356BFF&\\bord3\\shad2}}{text}'
 
     def _apply_word_pop_style(self, text: str, is_impactful: bool) -> str:
         """Word pop with scaling and outline glow"""
         if is_impactful:
-            # Scale up with red glow
-            return f'{{\\fscx150\\fscy150\\c&HFFFFFF&\\3c&H1744FF&\\3a&H00&\\blur2\\bord3}}{text}'
+            # Extra bright red with stronger effects for impactful words
+            return f'{{\\c&H4417FF&\\3c&H1744FF&\\3a&H00&\\blur3\\bord4}}{text}'
         else:
-            return f'{{\\c&HFFFFFF&\\bord2}}{text}'
+            # Red highlighting for ALL words in word_pop style
+            return f'{{\\c&H4417FF&\\bord3\\shad2}}{text}'
 
     def _apply_two_word_flow_style(self, text: str, is_impactful: bool) -> str:
         """Two word flow with underline effects"""
@@ -271,33 +275,40 @@ class AdvancedCaptionStyleManager:
             return f'{{\\c&HFFFFFF&\\bord1}}{text}'
 
     def _apply_impactful_highlight_style(self, text: str, is_impactful: bool) -> str:
-        """Impactful highlighting with circle burst effect"""
+        """White text with moderate purple border to simulate background box"""
         if is_impactful:
-            # Gold with circle burst (multiple border layers)
-            return f'{{\\c&H00D7FF&\\3c&H00D7FF&\\4c&H00D7FF&\\3a&H40&\\4a&H40&\\blur2\\bord5}}{text}'
+            # White text with moderate purple border to create box-like background
+            return f'{{\\c&HFFFFFF&\\3c&H8B5CF6&\\bord6\\shad2\\4c&H8B5CF6&}}{text}'
         else:
-            return f'{{\\c&HFFFFFF&\\bord2}}{text}'
+            # White text with moderate purple border for ALL words (simulates background box)
+            return f'{{\\c&HFFFFFF&\\3c&H8B5CF6&\\bord5\\shad2\\4c&H8B5CF6&}}{text}'
 
     def _get_animation_effect(self, segment: Dict) -> str:
         """
-        Get animation effect string for ASS
+        Get animation effect string for ASS - using proper ASS override tags
         """
         animation = self.style.get('animation', '')
 
         if animation == 'text_reveal':
-            return "Scroll up;y1:50;y2:0"
+            # Text slides up from bottom
+            return "{\\move(0,50,0,0)\\fad(200,0)}"
         elif animation == 'slide_in':
             direction = self.style.get('slide_direction', 'left')
             if direction == 'left':
-                return "Scroll;x1:-50;x2:0"
+                # Slide in from left (-100 pixels to center)
+                return "{\\move(-100,0,0,0)\\fad(200,0)}"
             else:
-                return "Scroll;x1:50;x2:0"
+                # Slide in from right (100 pixels to center)
+                return "{\\move(100,0,0,0)\\fad(200,0)}"
         elif animation == 'scale_pop':
-            return "!"  # ASS effect for pop/scale
+            # Scale from 50% to 100% with fade
+            return "{\\fscx50\\fscy50\\t(0,300,\\fscx100\\fscy100)\\fad(100,0)}"
         elif animation == 'fade_reveal':
-            return "Fad;150;150"
+            # Simple fade in
+            return "{\\fad(300,100)}"
         elif animation == 'impact_zoom':
-            return "Scroll up;y1:30;y2:0"
+            # Quick zoom in effect
+            return "{\\fscx80\\fscy80\\t(0,200,\\fscx100\\fscy100)\\fad(150,0)}"
 
         return ""
 
@@ -319,8 +330,8 @@ class AdvancedCaptionStyleManager:
         font_size = self.style['font_size']
         bold = 1 if 'Bold' in self.style['font'] or 'Black' in self.style['font'] else 0
 
-        # Use large, visible font size and proper positioning
-        visible_font_size = max(42, font_size)  # Ensure large, visible font
+        # Use configured font size with reasonable minimum for readability
+        visible_font_size = max(18, font_size)  # Ensure readable font but allow smaller sizes
         f.write(f"Style: Default,{font_name},{visible_font_size},&HFFFFFF,&HFFFFFF,&H000000,&H80000000,{bold},0,0,0,100,100,0,0,1,4,2,2,20,20,25,1\n\n")
 
     def _format_ass_timestamp(self, seconds: float) -> str:

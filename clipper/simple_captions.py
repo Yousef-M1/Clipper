@@ -29,7 +29,8 @@ def write_per_word_full_line_srt(segments, srt_path,
     The cue text is the full sentence: other words in white, the active word in purple.
     This prevents a long purple cue from being shown and ensures only the spoken word is purple.
     """
-    logger.info(f"Creating per-word SRT subtitles with purple highlighting")
+    color_name = "purple" if active_color == "#8B5CF6" else "red/pink" if active_color == "#FF6B6B" else "colored"
+    logger.info(f"Creating per-word SRT subtitles with {color_name} highlighting")
     index = 1
 
     with open(srt_path, "w", encoding="utf-8") as f:
