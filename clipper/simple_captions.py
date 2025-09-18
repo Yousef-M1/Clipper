@@ -2,9 +2,81 @@
 Simple, reliable caption system that creates clearly visible subtitles
 """
 import logging
+import math
+import html
 from typing import List, Dict
 
 logger = logging.getLogger(__name__)
+
+def format_srt_time(seconds: float) -> str:
+    """Format seconds to SRT timestamp format"""
+    if seconds < 0:
+        seconds = 0.0
+    total_ms = int(round(seconds * 1000))
+    ms = total_ms % 1000
+    total_seconds = total_ms // 1000
+    s = total_seconds % 60
+    m = (total_seconds // 60) % 60
+    h = total_seconds // 3600
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+def write_per_word_full_line_srt(segments, srt_path,
+                                 active_color="#8B5CF6",   # purple (consistent with other files)
+                                 inactive_color="#FFFFFF", # white
+                                 min_duration=0.08):
+    """
+    For each word: write one SRT cue spanning the word's start->end.
+    The cue text is the full sentence: other words in white, the active word in purple.
+    This prevents a long purple cue from being shown and ensures only the spoken word is purple.
+    """
+    logger.info(f"Creating per-word SRT subtitles with purple highlighting")
+    index = 1
+
+    with open(srt_path, "w", encoding="utf-8") as f:
+        for seg in segments:
+            words = seg.get("words")
+            # If there are no word-level timestamps, fallback to whole-segment white subtitle
+            if not words:
+                start = seg.get("start", 0.0)
+                end = seg.get("end", start + min_duration)
+                if end <= start:
+                    end = start + min_duration
+                text = seg.get("text", "").strip()
+                if text:
+                    # whole line white
+                    f.write(f"{index}\n")
+                    f.write(f"{format_srt_time(start)} --> {format_srt_time(end)}\n")
+                    f.write(f"<font color=\"{inactive_color}\">{text}</font>\n\n")
+                    index += 1
+                continue
+
+            # ensure words are sorted by start
+            words = sorted(words, key=lambda w: w.get("start", 0.0))
+            # collect just the raw word texts (no HTML escaping needed for subtitles)
+            word_texts = [w.get("word", "").strip() for w in words]
+
+            for i, w in enumerate(words):
+                w_start = float(w.get("start", 0.0))
+                w_end = float(w.get("end", w_start + min_duration))
+                if w_end <= w_start:
+                    w_end = w_start + min_duration
+
+                # build full sentence but color only the active word as active_color
+                parts = []
+                for j, wt in enumerate(word_texts):
+                    if j == i:
+                        parts.append(f"<font color=\"{active_color}\">{wt}</font>")
+                    else:
+                        parts.append(f"<font color=\"{inactive_color}\">{wt}</font>")
+                line = " ".join(parts).strip()
+
+                f.write(f"{index}\n")
+                f.write(f"{format_srt_time(w_start)} --> {format_srt_time(w_end)}\n")
+                f.write(f"{line}\n\n")
+                index += 1
+
+    logger.info(f"Created per-word SRT subtitle file: {srt_path}")
+    return srt_path
 
 def create_simple_visible_subtitles(segments: List[Dict], output_path: str, max_words: int = 2, style: str = 'modern_purple', output_format: str = 'horizontal') -> str:
     """
@@ -38,11 +110,10 @@ def create_simple_visible_subtitles(segments: List[Dict], output_path: str, max_
             else:
                 font_size = 24  # Standard for horizontal
 
-            # White text with black border, bottom center alignment (alignment=2)
-            # Use consistent margins and positioning to prevent line stacking
-            f.write(f"Style: Default,Arial,{font_size},&HFFFFFF,&HFFFFFF,&H000000,&H000000,1,0,0,0,100,100,0,0,1,3,2,2,0,0,30,1\n")
-            # Style for highlighted words (purple) - same exact positioning
-            f.write(f"Style: Highlight,Arial,{font_size},&HF65C8B,&HF65C8B,&H000000,&H000000,1,0,0,0,100,100,0,0,1,3,2,2,0,0,30,1\n\n")
+            # Karaoke style: text starts white and turns purple when spoken
+            # Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+            # PrimaryColour=white (unspoken text), SecondaryColour=purple (spoken text highlight)
+            f.write(f"Style: Default,Arial,{font_size},&HFFFFFF,&HF65C8B,&H000000,&H000000,1,0,0,0,100,100,0,0,1,3,2,2,0,0,30,1\n\n")
 
             # Write events
             f.write("[Events]\n")
@@ -156,10 +227,11 @@ def organize_words_for_visibility(segments: List[Dict], max_words: int) -> List[
 
 def create_simple_purple_highlight(segment, max_words: int) -> str:
     """
-    Create simple purple highlighting within a single segment - no duplicates
-    Uses ASS karaoke timing with proper color transitions
+    Create TRUE karaoke highlighting: white text turns purple when spoken
+    Uses proper ASS karaoke timing relative to segment start
     """
     words_data = segment["words"]
+    segment_start = segment["start"]
 
     # Use ALL words - don't limit to max_words to prevent missing text
     karaoke_parts = []
@@ -169,24 +241,38 @@ def create_simple_purple_highlight(segment, max_words: int) -> str:
         if not word:
             continue
 
-        # Calculate accurate timing in centiseconds for ASS karaoke
+        # Calculate timing relative to segment start for ASS karaoke
+        word_start_relative = word_data["start"] - segment_start
         word_duration = word_data["end"] - word_data["start"]
-        # Use more accurate timing - remove minimum to match audio better
-        centiseconds = max(20, int(word_duration * 100))  # Reduced minimum for faster timing
 
-        # ASS karaoke with proper color transition
-        # First set all text to white, then highlight current word purple
-        if i == 0:
-            # First word: start white, turn purple
-            karaoke_part = f"{{\\c&HFFFFFF&}}{{\\k{centiseconds}\\c&HF65C8B&}}{word}"
-        else:
-            # Other words: previous word becomes white, current becomes purple
-            karaoke_part = f"{{\\k{centiseconds}\\c&HF65C8B&}}{word}"
+        # Convert to centiseconds for ASS
+        delay_cs = int(word_start_relative * 100)
+        duration_cs = int(word_duration * 100)
 
+        # Ensure minimum values to prevent ASS errors
+        delay_cs = max(0, delay_cs)
+        duration_cs = max(1, duration_cs)
+
+        # For the first word, use the delay before it starts
+        if i == 0 and delay_cs > 0:
+            # Add silence before first word with white color
+            karaoke_parts.append(f"{{\\k{delay_cs}\\c&HFFFFFF&}}")
+        elif i > 0:
+            # Calculate gap between previous word end and current word start
+            prev_word_end = words_data[i-1]["end"] - segment_start
+            gap_cs = max(0, int((word_start_relative - prev_word_end) * 100))
+            if gap_cs > 0:
+                # Add space with white color for gaps
+                karaoke_parts.append(f"{{\\k{gap_cs}\\c&HFFFFFF&}} ")
+
+        # The word itself - white text that turns purple when spoken
+        # Use \kf for fill effect: starts white, fills with purple
+        # Add proper spacing before word (except first word)
+        word_with_space = " " + word if i > 0 else word
+        karaoke_part = f"{{\\kf{duration_cs}\\c&HFFFFFF&\\2c&HF65C8B&}}{word_with_space}"
         karaoke_parts.append(karaoke_part)
 
-    # Final reset to white for all remaining text
-    return " ".join(karaoke_parts) + "{\\c&HFFFFFF&}"
+    return "".join(karaoke_parts)
 
 def create_word_highlighted_subtitles(file_handle, segments: List[Dict], max_words: int):
     """
@@ -258,12 +344,14 @@ def create_highlighted_phrase(words: List[str], highlight_index: int) -> str:
     for i, word in enumerate(words):
         if i == highlight_index:
             # Highlight current word in purple using ASS color tags
+            # Ensure proper white text with purple highlighting (not purple text)
             highlighted_word = f'{{\\c&HF65C8B&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
             result_words.append(highlighted_word)
         else:
-            # Normal white words
-            result_words.append(word)
+            # Normal white words - ensure they stay white
+            result_words.append(f'{{\\c&HFFFFFF&}}{word}')
 
+    # Join with proper spacing between words
     return " ".join(result_words)
 
 def format_ass_timestamp(seconds: float) -> str:

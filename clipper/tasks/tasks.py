@@ -11,7 +11,7 @@ import logging
 from ..ai_moments import detect_ai_moments
 from ..caption_styles import CaptionStyleManager, create_styled_subtitles
 from ..advanced_captions import AdvancedCaptionStyleManager, create_advanced_subtitles
-from ..simple_captions import create_simple_visible_subtitles
+from ..simple_captions import create_simple_visible_subtitles, write_per_word_full_line_srt
 from ..video_quality import VideoQualityManager, create_quality_controlled_clip
 
 logger = logging.getLogger(__name__)
@@ -40,15 +40,25 @@ def write_enhanced_clip_srt(segments, srt_path, style='modern_purple', enable_wo
         return None
 
     try:
-        # ALWAYS use simple, reliable captions for now to fix visibility issues
-        logger.info(f"Creating simple, visible subtitles with max words: {max_words_per_screen}")
-        return create_simple_visible_subtitles(
-            valid_segments,
-            srt_path,
-            max_words=max_words_per_screen,
-            style=style,
-            output_format=output_format
-        )
+        # Use per-word highlighting for modern_purple with word highlighting enabled
+        if enable_word_highlighting and style == 'modern_purple':
+            logger.info(f"Creating per-word SRT subtitles with purple highlighting")
+            return write_per_word_full_line_srt(
+                valid_segments,
+                srt_path,
+                active_color="#8B5CF6",   # purple (consistent with other files)
+                inactive_color="#FFFFFF"  # white
+            )
+        else:
+            # Use simple, reliable captions for other styles
+            logger.info(f"Creating simple, visible subtitles with max words: {max_words_per_screen}")
+            return create_simple_visible_subtitles(
+                valid_segments,
+                srt_path,
+                max_words=max_words_per_screen,
+                style=style,
+                output_format=output_format
+            )
 
     except Exception as e:
         logger.error(f"Simple subtitles failed ({e}), using basic fallback")

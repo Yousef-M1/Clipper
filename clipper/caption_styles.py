@@ -268,9 +268,10 @@ class CaptionStyleManager:
 
                 result_words.append(highlighted_word)
             else:
-                # Non-highlighted words
+                # Non-highlighted words - ensure they stay white
                 result_words.append(f'<font color="{self.style["primary_color"]}">{word}</font>')
 
+        # Join with proper spacing between words
         return " ".join(result_words)
 
     def _create_segment_styled_text(self, text: str) -> str:
@@ -377,7 +378,7 @@ class CaptionStyleManager:
                 # Highlight current word with ASS color tags (BGR format)
                 if self.style_name == 'modern_purple':
                     # Purple #8B5CF6 = RGB(139,92,246) = BGR(246,92,139) = &HF65C8B&
-                    # Use proper purple color in BGR format
+                    # Use proper purple color in BGR format with proper spacing
                     highlighted_word = f'{{\\c&HF65C8B&\\b1}}{word}{{\\c&HFFFFFF&\\b0}}'
                 elif self.style_name == 'youtube_style':
                     # Gold #FFD700 = RGB(255,215,0) = BGR(0,215,255) = &H00D7FF&
@@ -389,6 +390,7 @@ class CaptionStyleManager:
                 # Non-highlighted words stay white
                 result_words.append(word)
 
+        # Join with proper spacing to fix word spacing issues
         return " ".join(result_words)
 
     def _format_ass_timestamp(self, seconds: float) -> str:
