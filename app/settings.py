@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'user',
     'payments',
     'social_media',
+    'ai_influencer',
 ]
 
 MIDDLEWARE = [

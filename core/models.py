@@ -267,6 +267,28 @@ class VideoRequest(models.Model):
         help_text="Fade out duration for background music (seconds)"
     )
 
+    # VIDEO FILTER FIELDS
+    apply_video_filter = models.BooleanField(
+        default=False,
+        help_text="Apply video filter effect to clips"
+    )
+    video_filter = models.CharField(
+        max_length=20,
+        choices=[
+            ('vintage', 'Vintage Film'),
+            ('black_white', 'Black & White'),
+            ('sepia', 'Sepia Tone'),
+            ('neon', 'Neon Glow')
+        ],
+        null=True,
+        blank=True,
+        help_text="Video filter to apply"
+    )
+    filter_intensity = models.FloatField(
+        default=1.0,
+        help_text="Filter intensity (0.0-1.0)"
+    )
+
     def __str__(self):
         return f"{self.url} ({self.user.email})"
 
@@ -301,6 +323,10 @@ class Clip(models.Model):
     # Caption styling information
     used_caption_style = models.CharField(max_length=20, default='modern_purple')
     has_word_highlighting = models.BooleanField(default=False)
+
+    # Video filter information
+    applied_filter = models.CharField(max_length=20, null=True, blank=True, help_text="Video filter applied to this clip")
+    filter_intensity_used = models.FloatField(null=True, blank=True, help_text="Filter intensity used (0.0-1.0)")
 
     # SOCIAL MEDIA POSTING TRACKING
     social_posts_created = models.BooleanField(default=False, help_text="Whether social media posts were created for this clip")
