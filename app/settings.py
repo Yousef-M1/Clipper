@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'payments',
     'social_media',
     'ai_influencer',
+    'content_generation',
 ]
 
 MIDDLEWARE = [

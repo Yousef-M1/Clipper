@@ -25,6 +25,7 @@ urlpatterns = [
     path('api/user/', include('user.urls')),
     path('api/payments/', include('payments.urls')),
     path('api/social/', include('social_media.urls')),
+    path('api/content/', include('content_generation.urls')),
     path('', include('ai_influencer.urls')),
 ]
 
